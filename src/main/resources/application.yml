@@ -1,0 +1,27 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: passenger-counter
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+
+pc:
+  models-dir: ./models
+  yolo-input-size: 640
+  confidence-threshold: 0.35
+  nms-iou-threshold: 0.5
+  reid-similarity-threshold: 0.65
+  process-every-n-frames: 4
+  emit-frame-every-ms: 150
+  jpeg-quality: 0.55
+
+logging:
+  level:
+    ru.rtds.pc: DEBUG
+    org.bytedeco: WARN

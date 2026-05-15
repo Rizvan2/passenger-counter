@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    container_name: passenger-counter
+    ports:
+      - "8080:8080"
+    volumes:
+      # Видео файлы — кладёшь сюда и используешь путь /videos/имя.mp4 в UI
+      - ./videos:/videos:ro
+      # Кеш моделей чтобы не качались заново при пересборке
+      - ./models:/app/models
+    environment:
+      JAVA_OPTS: "-Xms256m -Xmx2g"
+    # Явные DNS на случай если у Docker проблемы с резолвом HuggingFace
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    restart: unless-stopped

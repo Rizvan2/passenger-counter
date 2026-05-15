@@ -1,0 +1,13 @@
+.gradle/
+build/
+.idea/
+*.iml
+out/
+
+# Модели и видео — большие файлы
+models/*.onnx
+videos/*
+
+# Сохранить структуру папок
+!videos/.gitkeep
+!models/.gitkeep

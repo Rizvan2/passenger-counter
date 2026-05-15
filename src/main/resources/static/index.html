@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Passenger Counter — тест видеоаналитики</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Passenger Counter</h1>
+  <div id="reid-status" class="badge">ReID: проверяем…</div>
+</header>
+
+<main>
+  <section class="controls">
+    <div class="row">
+      <label>
+        Путь к видео на сервере
+        <input id="videoPath" type="text" placeholder="/videos/bus.mp4 (или C:/test/bus.mp4 на Windows)" />
+      </label>
+    </div>
+    <div class="row">
+      <label>
+        Вертикальная линия (X, % ширины кадра)
+        <span id="lineLabel">50%</span>
+        <input id="lineRatio" type="range" min="5" max="95" value="70" />
+      </label>
+    </div>
+    <div class="row">
+      <button id="btnStart">▶ Старт</button>
+      <button id="btnStop" disabled>■ Стоп</button>
+      <span id="status" class="status">готов</span>
+    </div>
+    <p class="hint">
+      Подсказка: на видео ниже после старта будут отрисовываться боксы, вертикальная линия и счётчик.
+      Линию можно двигать <b>мышью прямо по кадру</b> по горизонтали.<br>
+      <b>Справа</b> от линии = улица. <b>Слева</b> = салон.
+      Человек перешёл справа налево → ВОШЁЛ. Слева направо → ВЫШЕЛ.
+    </p>
+  </section>
+
+  <section class="viewer">
+    <div class="canvas-wrap">
+      <canvas id="canvas"></canvas>
+    </div>
+    <aside class="stats">
+      <div class="stat boarding">
+        <div class="label">Вошло</div>
+        <div id="statBoarding" class="value">0</div>
+      </div>
+      <div class="stat alighting">
+        <div class="label">Вышло</div>
+        <div id="statAlighting" class="value">0</div>
+      </div>
+      <div class="stat onboard">
+        <div class="label">В салоне</div>
+        <div id="statOnboard" class="value">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">FPS обработки</div>
+        <div id="statFps" class="value">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Кадров</div>
+        <div id="statFrames" class="value">0</div>
+      </div>
+    </aside>
+  </section>
+
+  <section id="final" class="final hidden">
+    <h2>Обработка завершена</h2>
+    <div id="finalText"></div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
