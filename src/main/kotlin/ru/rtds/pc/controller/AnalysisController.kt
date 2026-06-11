@@ -23,6 +23,8 @@ class AnalysisController(
         val s = sessionManager.create(
             req.videoPath,
             req.lineYRatio,
+            req.insideOnTop,
+            req.autoInitialOnboard,
             req.initialOnboard
         )
         analysisService.startAsync(s)

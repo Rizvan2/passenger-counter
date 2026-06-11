@@ -1,79 +1,94 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8">
-<title>Passenger Counter — тест видеоаналитики</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="/style.css">
+  <meta charset="utf-8">
+  <title>Passenger Counter Monitor</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/style.css?v=20260519-1">
 </head>
 <body>
-<header>
-  <h1>Passenger Counter</h1>
-  <div id="reid-status" class="badge">ReID: проверяем…</div>
+<header class="topbar">
+  <div>
+    <h1>Passenger Counter</h1>
+    <span class="subhead">Мониторинг дверной зоны</span>
+  </div>
+  <div class="topbar-right">
+    <span id="reid-status" class="badge">ReID: проверка</span>
+    <span id="status" class="status">готов</span>
+  </div>
 </header>
 
-<main>
-  <section class="controls">
-    <div class="row">
-      <label>
-        Путь к видео на сервере
-        <input id="videoPath" type="text" placeholder="/videos/bus.mp4 (или C:/test/bus.mp4 на Windows)" />
-      </label>
+<main class="shell">
+  <section class="control-strip">
+    <label class="field field-wide">
+      <span>Видео на сервере</span>
+      <input id="videoPath" type="text" placeholder="/videos/bus.mp4 или C:/test/bus.mp4">
+    </label>
+
+    <label class="field">
+      <span>Горизонтальная линия <b id="lineLabel">70%</b></span>
+      <input id="lineRatio" type="range" min="5" max="95" value="70">
+    </label>
+
+    <label class="field">
+      <span>Сторона салона</span>
+      <select id="insideSide">
+        <option value="top" selected>сверху</option>
+        <option value="bottom">снизу</option>
+      </select>
+    </label>
+
+    <div class="actions">
+      <button id="btnStart" class="primary">Старт</button>
+      <button id="btnStop" class="danger" disabled>Стоп</button>
     </div>
-    <div class="row">
-      <label>
-        Вертикальная линия (X, % ширины кадра)
-        <span id="lineLabel">50%</span>
-        <input id="lineRatio" type="range" min="5" max="95" value="70" />
-      </label>
-    </div>
-    <div class="row">
-      <button id="btnStart">▶ Старт</button>
-      <button id="btnStop" disabled>■ Стоп</button>
-      <span id="status" class="status">готов</span>
-    </div>
-    <p class="hint">
-      Подсказка: на видео ниже после старта будут отрисовываться боксы, вертикальная линия и счётчик.
-      Линию можно двигать <b>мышью прямо по кадру</b> по горизонтали.<br>
-      <b>Справа</b> от линии = улица. <b>Слева</b> = салон.
-      Человек перешёл справа налево → ВОШЁЛ. Слева направо → ВЫШЕЛ.
-    </p>
   </section>
 
-  <section class="viewer">
-    <div class="canvas-wrap">
-      <canvas id="canvas"></canvas>
+  <section class="dashboard">
+    <div class="video-panel">
+      <div class="canvas-wrap">
+        <canvas id="canvas"></canvas>
+        <div id="emptyState" class="empty-state">Ожидание видеопотока</div>
+      </div>
     </div>
-    <aside class="stats">
-      <div class="stat boarding">
-        <div class="label">Вошло</div>
-        <div id="statBoarding" class="value">0</div>
+
+    <aside class="side-panel">
+      <div class="stats-grid">
+        <div class="stat boarding"><span>Вошло</span><strong id="statBoarding">0</strong></div>
+        <div class="stat alighting"><span>Вышло</span><strong id="statAlighting">0</strong></div>
+        <div class="stat onboard"><span>В салоне</span><strong id="statOnboard">0</strong></div>
+        <div class="stat"><span>Начально</span><strong id="statInitial">0</strong></div>
+        <div class="stat"><span>Треки</span><strong id="statTracks">0</strong></div>
+        <div class="stat"><span>FPS</span><strong id="statFps">-</strong></div>
+        <div class="stat"><span>Кадр</span><strong id="statFrames">0</strong></div>
       </div>
-      <div class="stat alighting">
-        <div class="label">Вышло</div>
-        <div id="statAlighting" class="value">0</div>
+
+      <div class="zone-card">
+        <div class="panel-title">Зоны</div>
+        <div class="zone-row"><span class="dot inside"></span><span>Салон</span><b id="insideSideLabel">сверху</b></div>
+        <div class="zone-row"><span class="dot doorway"></span><span>Проем</span><b id="doorWidthLabel">-</b></div>
+        <div class="zone-row"><span class="dot outside"></span><span>Улица</span><b id="outsideSideLabel">снизу</b></div>
+        <div class="zone-row"><span class="dot"></span><span>Видно всего</span><b id="visibleCount">0</b></div>
+        <div class="zone-row"><span class="dot inside"></span><span>В зоне салона</span><b id="insideCount">0</b></div>
+        <div class="zone-row"><span class="dot doorway"></span><span>В проеме</span><b id="doorwayCount">0</b></div>
+        <div class="zone-row"><span class="dot outside"></span><span>В зоне улицы</span><b id="outsideCount">0</b></div>
       </div>
-      <div class="stat onboard">
-        <div class="label">В салоне</div>
-        <div id="statOnboard" class="value">0</div>
-      </div>
-      <div class="stat">
-        <div class="label">FPS обработки</div>
-        <div id="statFps" class="value">—</div>
-      </div>
-      <div class="stat">
-        <div class="label">Кадров</div>
-        <div id="statFrames" class="value">0</div>
+
+      <div class="events-card">
+        <div class="panel-title">События</div>
+        <div id="eventLog" class="event-log">
+          <div class="event empty">Пока нет событий</div>
+        </div>
       </div>
     </aside>
   </section>
 
   <section id="final" class="final hidden">
-    <h2>Обработка завершена</h2>
+    <h2>Сессия завершена</h2>
     <div id="finalText"></div>
   </section>
 </main>
 
-<script src="/app.js"></script>
+<script src="/app.js?v=20260519-1"></script>
 </body>
 </html>

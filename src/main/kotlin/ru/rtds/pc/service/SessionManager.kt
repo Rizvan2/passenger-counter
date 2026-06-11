@@ -11,12 +11,20 @@ class SessionManager {
     private val log = LoggerFactory.getLogger(javaClass)
     private val sessions = ConcurrentHashMap<String, AnalysisSession>()
 
-    fun create(videoPath: String, lineYRatio: Float, initialOnboard: Int): AnalysisSession {
+    fun create(
+        videoPath: String,
+        lineYRatio: Float,
+        insideOnTop: Boolean,
+        autoInitialOnboard: Boolean,
+        initialOnboard: Int,
+    ): AnalysisSession {
         val id = UUID.randomUUID().toString()
         val s = AnalysisSession(
             id = id,
             sourcePath = videoPath,
             lineYRatio = lineYRatio,
+            insideOnTop = insideOnTop,
+            autoInitialOnboard = autoInitialOnboard,
             initialOnboard = initialOnboard
         )
         sessions[id] = s

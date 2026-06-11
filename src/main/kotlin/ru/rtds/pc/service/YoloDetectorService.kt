@@ -14,7 +14,7 @@ import java.nio.FloatBuffer
 @Service
 class YoloDetectorService(
     private val modelDownloadService: ModelDownloadService,
-    @Value("\${pc.yolo-input-size}") private val inputSize: Int,
+    @Value("\${pc.yolo-input-size}") private val configuredInputSize: Int,
     @Value("\${pc.confidence-threshold}") private val confThreshold: Float,
     @Value("\${pc.nms-iou-threshold}") private val nmsIouThreshold: Float,
 ) {
@@ -27,6 +27,8 @@ class YoloDetectorService(
     private val personClassId = 0
     private val numClasses = 80
     private var numBoxes: Int = 0
+    private var effectiveInputSize: Int = configuredInputSize
+    val inputSize: Int get() = effectiveInputSize
 
     @PostConstruct
     fun init() {
@@ -39,9 +41,13 @@ class YoloDetectorService(
         inputName = session.inputNames.first()
 
         // Проверка формата выхода. Поддерживаем только стандартный YOLOv8: [1, 84, N]
+        val inputInfo = session.inputInfo[inputName]?.info
+        val inputStr = inputInfo.toString()
+        effectiveInputSize = resolveInputSize(inputStr)
+
         val outputInfo = session.outputInfo.values.first().info
         val outStr = outputInfo.toString()
-        log.info("YOLO loaded. input='{}', output info: {}", inputName, outStr)
+        log.info("YOLO loaded. input='{}', input info: {}, output info: {}", inputName, inputStr, outStr)
 
         if (!outStr.contains("shape=[1, 84")) {
             log.error("=".repeat(70))
@@ -59,6 +65,26 @@ class YoloDetectorService(
             log.error("=".repeat(70))
             throw IllegalStateException("Unsupported YOLO model format: $outStr")
         }
+    }
+
+    private fun resolveInputSize(inputInfo: String): Int {
+        val fixedShape = Regex("""shape=\[1, 3, (\d+), (\d+)]""").find(inputInfo)
+        if (fixedShape != null) {
+            val h = fixedShape.groupValues[1].toInt()
+            val w = fixedShape.groupValues[2].toInt()
+            if (h == w) {
+                if (configuredInputSize != h) {
+                    log.warn(
+                        "Configured pc.yolo-input-size={} is ignored because the ONNX model expects fixed {}x{} input",
+                        configuredInputSize,
+                        w,
+                        h,
+                    )
+                }
+                return h
+            }
+        }
+        return configuredInputSize
     }
 
     @PreDestroy

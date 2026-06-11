@@ -13,13 +13,23 @@ spring:
 
 pc:
   models-dir: ./models
-  yolo-input-size: 640
+  yolo-input-size: 416
   confidence-threshold: 0.35
   nms-iou-threshold: 0.5
   reid-similarity-threshold: 0.65
-  process-every-n-frames: 4
-  emit-frame-every-ms: 150
-  jpeg-quality: 0.55
+  track-active-lost-frames: 120
+  track-center-distance-threshold-px: 90
+  side-fallback-max-distance-px: 1200
+  process-every-n-frames: 3
+  emit-frame-every-ms: 120
+  jpeg-quality: 0.45
+  analysis-log-every-n-frames: 30
+  door-zone-half-width-ratio: 0.04
+  door-zone-min-half-width-px: 10
+  door-zone-max-half-width-px: 60
+  count-anchor-y-ratio: 0.55
+  count-min-anchor-movement-px: 35
+  count-center-line-crossing: true
 
 logging:
   level:

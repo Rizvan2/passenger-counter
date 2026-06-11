@@ -24,6 +24,7 @@ class ReidService(
     private var session: OrtSession? = null
     private var inputName: String? = null
     private var available = false
+    private var batchSize = 1
 
     @PostConstruct
     fun init() {
@@ -35,12 +36,26 @@ class ReidService(
             env = OrtEnvironment.getEnvironment()
             session = env!!.createSession(modelDownloadService.osnetPath.toAbsolutePath().toString())
             inputName = session!!.inputNames.first()
+            val inputInfo = session!!.inputInfo[inputName]?.info.toString()
+            val outputInfo = session!!.outputInfo.values.firstOrNull()?.info.toString()
+            batchSize = resolveBatchSize(inputInfo)
             available = true
-            log.info("ReID (OSNet) loaded. input='{}'", inputName)
+            log.info(
+                "ReID (OSNet) loaded. input='{}', batchSize={}, input info: {}, output info: {}",
+                inputName,
+                batchSize,
+                inputInfo,
+                outputInfo,
+            )
         } catch (e: Exception) {
             log.warn("Failed to init ReID, disabling. Reason: {}", e.message)
             available = false
         }
+    }
+
+    private fun resolveBatchSize(inputInfo: String): Int {
+        val shape = Regex("""shape=\[(\d+),\s*3,\s*\d+,\s*\d+]""").find(inputInfo)
+        return shape?.groupValues?.get(1)?.toIntOrNull()?.coerceAtLeast(1) ?: 1
     }
 
     @PreDestroy
@@ -78,7 +93,7 @@ class ReidService(
         // CHW нормализация ImageNet
         val mean = floatArrayOf(0.485f, 0.456f, 0.406f)
         val std = floatArrayOf(0.229f, 0.224f, 0.225f)
-        val input = FloatArray(3 * width * height)
+        val singleInput = FloatArray(3 * width * height)
         val plane = width * height
         val pixels = IntArray(plane)
         resized.getRGB(0, 0, width, height, pixels, 0, width)
@@ -87,23 +102,49 @@ class ReidService(
             val r = ((rgb shr 16) and 0xFF) / 255f
             val gg = ((rgb shr 8) and 0xFF) / 255f
             val b = (rgb and 0xFF) / 255f
-            input[i] = (r - mean[0]) / std[0]
-            input[plane + i] = (gg - mean[1]) / std[1]
-            input[2 * plane + i] = (b - mean[2]) / std[2]
+            singleInput[i] = (r - mean[0]) / std[0]
+            singleInput[plane + i] = (gg - mean[1]) / std[1]
+            singleInput[2 * plane + i] = (b - mean[2]) / std[2]
         }
 
-        val shape = longArrayOf(1, 3, height.toLong(), width.toLong())
+        val input = if (batchSize == 1) {
+            singleInput
+        } else {
+            FloatArray(batchSize * singleInput.size).also { batched ->
+                for (batchIdx in 0 until batchSize) {
+                    singleInput.copyInto(batched, destinationOffset = batchIdx * singleInput.size)
+                }
+            }
+        }
+        val shape = longArrayOf(batchSize.toLong(), 3, height.toLong(), width.toLong())
         return try {
             OnnxTensor.createTensor(e, FloatBuffer.wrap(input), shape).use { tensor ->
                 s.run(mapOf(name to tensor)).use { result ->
-                    @Suppress("UNCHECKED_CAST")
-                    val out = result.get(0).value as Array<FloatArray>
-                    normalize(out[0])
+                    normalize(firstEmbedding(result.get(0).value))
                 }
             }
         } catch (ex: Exception) {
-            log.debug("ReID extraction failed: {}", ex.message)
+            available = false
+            log.warn("ReID extraction failed once, disabling ReID for this run. Reason: {}", ex.message)
             null
+        }
+    }
+
+    private fun firstEmbedding(output: Any): FloatArray {
+        @Suppress("UNCHECKED_CAST")
+        return when (output) {
+            is Array<*> -> {
+                val first = output.firstOrNull()
+                    ?: throw IllegalStateException("ReID output is empty")
+                when (first) {
+                    is FloatArray -> first
+                    is Array<*> -> first.filterIsInstance<FloatArray>().firstOrNull()
+                        ?: throw IllegalStateException("Unsupported nested ReID output shape")
+                    else -> throw IllegalStateException("Unsupported ReID output element: ${first::class.java.name}")
+                }
+            }
+            is FloatArray -> output
+            else -> throw IllegalStateException("Unsupported ReID output: ${output::class.java.name}")
         }
     }
 

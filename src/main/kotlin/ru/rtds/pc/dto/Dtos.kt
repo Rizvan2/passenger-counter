@@ -1,5 +1,6 @@
 package ru.rtds.pc.dto
 
+import com.fasterxml.jackson.annotation.JsonAlias
 import jakarta.validation.constraints.DecimalMax
 import jakarta.validation.constraints.DecimalMin
 import jakarta.validation.constraints.NotBlank
@@ -10,6 +11,11 @@ data class StartSessionRequest(
 
     @field:DecimalMin("0.05") @field:DecimalMax("0.95")
     val lineYRatio: Float = 0.5f,
+
+    @JsonAlias("insideOnLeft")
+    val insideOnTop: Boolean = true,
+
+    val autoInitialOnboard: Boolean = true,
 
     val initialOnboard: Int = 0,
 )
@@ -37,9 +43,19 @@ data class FrameUpdateDto(
     val height: Int,
     val detections: List<BoxDto>,
     val lineY: Float,
+    val doorTopY: Float,
+    val doorBottomY: Float,
+    val insideOnTop: Boolean,
+    val events: List<PassengerEventDto>,
     val boardings: Int,
     val alightings: Int,
+    val initialOnboard: Int,
+    val initialOnboardLocked: Boolean,
     val onboard: Int,
+    val visibleDetections: Int,
+    val insideDetections: Int,
+    val doorwayDetections: Int,
+    val outsideDetections: Int,
     val fps: Float,
 )
 
@@ -52,6 +68,16 @@ data class BoxDto(
     val confidence: Float,
     val isBoarded: Boolean,
     val isAlighted: Boolean,
+    val zone: String,
+    val state: String,
+)
+
+data class PassengerEventDto(
+    val trackId: Int,
+    val direction: String,
+    val frameIndex: Int,
+    val from: String,
+    val to: String,
 )
 
 data class SessionFinishedDto(
