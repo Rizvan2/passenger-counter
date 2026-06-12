@@ -15,6 +15,21 @@ class AnalysisResultEntity(
     @Column(name = "source_path", nullable = false, columnDefinition = "text")
     var sourcePath: String = "",
 
+    // Имя файла отдельно от пути — путь меняется когда файл перемещается
+    // в processed/, а имя остаётся стабильным идентификатором записи
+    @Column(name = "video_name", nullable = false, length = 512)
+    var videoName: String = "",
+
+    // SHA-256 файла — для персистентного дедупа при рестарте приложения.
+    // Без этого повторная store-and-forward доставка одного файла
+    // после рестарта запустит анализ заново.
+    @Column(name = "source_hash", length = 64)
+    var sourceHash: String? = null,
+
+    // Источник видео: FTP (с регистратора) или MANUAL (загружено вручную через UI)
+    @Column(name = "source", nullable = false, length = 16)
+    var source: String = Source.MANUAL.name,
+
     @Column(name = "status", nullable = false, length = 32)
     var status: String = "",
 
@@ -50,4 +65,6 @@ class AnalysisResultEntity(
 
     @Column(name = "error_message", columnDefinition = "text")
     var errorMessage: String? = null,
-)
+) {
+    enum class Source { FTP, MANUAL }
+}

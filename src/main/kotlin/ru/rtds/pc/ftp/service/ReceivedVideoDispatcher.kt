@@ -4,6 +4,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
 import ru.rtds.pc.ftp.config.FtpProperties
+import ru.rtds.pc.model.VideoSource
+import ru.rtds.pc.persistence.analysis.AnalysisResultPersistenceService
 import ru.rtds.pc.service.AnalysisService
 import ru.rtds.pc.service.SessionManager
 import java.nio.file.Files
@@ -16,24 +18,27 @@ class ReceivedVideoDispatcher(
     private val properties: FtpProperties,
     private val sessionManager: SessionManager,
     private val analysisService: AnalysisService,
+    private val persistenceService: AnalysisResultPersistenceService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // Дедуп по SHA-256 — исключает повторный анализ одного файла при store-and-forward.
-    // In-memory: не переживает рестарт. Для прода с гарантией — вынести в БД
-    // (добавить поле source_hash в AnalysisResultEntity и проверять через репозиторий).
+    // In-memory дедуп — быстрая проверка без обращения к БД.
+    // Персистентный дедуп через БД (existsByHash) страхует после рестарта.
     private val seenFingerprints = ConcurrentHashMap.newKeySet<String>()
 
-    /**
-     * Вызывается из UploadCompletionFtplet в потоке FTP-сервера.
-     * Сразу уходим в @Async чтобы не блокировать FTP-соединение пока
-     * считается SHA-256 и стартует анализ.
-     */
     @Async("analysisExecutor")
     fun onVideoReceived(videoFile: Path) {
         val fingerprint = sha256(videoFile)
+
+        // 1. Быстрая проверка in-memory
         if (!seenFingerprints.add(fingerprint)) {
-            log.info("Duplicate FTP upload ignored: {} ({})", videoFile.fileName, fingerprint)
+            log.info("Duplicate FTP upload ignored (in-memory): {} ({})", videoFile.fileName, fingerprint)
+            return
+        }
+
+        // 2. Персистентная проверка через БД (работает после рестарта)
+        if (persistenceService.existsByHash(fingerprint)) {
+            log.info("Duplicate FTP upload ignored (db): {} ({})", videoFile.fileName, fingerprint)
             return
         }
 
@@ -47,15 +52,15 @@ class ReceivedVideoDispatcher(
         )
 
         val session = sessionManager.create(
-            videoPath            = videoFile.toAbsolutePath().toString(),
-            lineYRatio           = properties.analysis.lineYRatio,
-            insideOnTop          = properties.analysis.insideOnTop,
-            autoInitialOnboard   = properties.analysis.autoInitialOnboard,
-            initialOnboard       = properties.analysis.initialOnboard,
+            videoPath          = videoFile.toAbsolutePath().toString(),
+            lineYRatio         = properties.analysis.lineYRatio,
+            insideOnTop        = properties.analysis.insideOnTop,
+            autoInitialOnboard = properties.analysis.autoInitialOnboard,
+            initialOnboard     = properties.analysis.initialOnboard,
+            source             = VideoSource.FTP,
+            sourceHash         = fingerprint,
         )
 
-        // startAsync уже помечен @Async("analysisExecutor") — поставит задачу в очередь,
-        // не заблокирует этот поток.
         analysisService.startAsync(session)
         log.info("Analysis queued for FTP upload: {} → session {}", videoFile.fileName, session.id)
     }

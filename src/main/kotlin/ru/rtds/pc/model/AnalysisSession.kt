@@ -9,6 +9,10 @@ class AnalysisSession(
     val insideOnTop: Boolean = true,
     val autoInitialOnboard: Boolean = true,
     initialOnboard: Int = 0,
+    // Источник видео — используется при сохранении результата в БД
+    val source: VideoSource = VideoSource.MANUAL,
+    // SHA-256 файла — для персистентного дедупа FTP-роликов после рестарта
+    val sourceHash: String? = null,
 ) {
     @Volatile var stopRequested: Boolean = false
     @Volatile var status: SessionStatus = SessionStatus.RUNNING
@@ -33,3 +37,5 @@ class AnalysisSession(
 }
 
 enum class SessionStatus { RUNNING, FINISHED, STOPPED, FAILED }
+
+enum class VideoSource { FTP, MANUAL }
