@@ -4,7 +4,9 @@ import org.bytedeco.javacv.FFmpegFrameGrabber
 import org.bytedeco.javacv.Frame
 import org.bytedeco.javacv.Java2DFrameConverter
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import javax.imageio.IIOImage
@@ -13,7 +15,13 @@ import javax.imageio.ImageWriteParam
 import javax.imageio.stream.MemoryCacheImageOutputStream
 
 @Service
-class VideoFrameReader {
+class VideoFrameReader(
+    // Минимальный размер стороны кадра для анализа.
+    // Если видео меньше — апскейлим до этого значения, сохраняя пропорции.
+    // Все абсолютные пороги (door-zone-px, anchor-movement-px, center-distance-px)
+    // рассчитаны под кадры ~480–720px высотой; при меньшем разрешении они ломаются.
+    @Value("\${pc.min-frame-height:480}") private val minFrameHeight: Int,
+) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun process(
@@ -29,15 +37,33 @@ class VideoFrameReader {
         val converter = Java2DFrameConverter()
         try {
             grabber.start()
-            log.info("Opened: {} ({}x{} @ {} fps)",
-                sourcePath, grabber.imageWidth, grabber.imageHeight, grabber.frameRate)
+            val origW = grabber.imageWidth
+            val origH = grabber.imageHeight
+            val scale = upscaleRatio(origW, origH)
+            val outW = (origW * scale).toInt()
+            val outH = (origH * scale).toInt()
+
+            if (scale > 1.0f) {
+                log.info(
+                    "Opened: {} ({}x{} @ {} fps) — upscaling to {}x{} (ratio={}) for analysis",
+                    sourcePath, origW, origH, grabber.frameRate, outW, outH,
+                    "%.2f".format(scale),
+                )
+            } else {
+                log.info(
+                    "Opened: {} ({}x{} @ {} fps)",
+                    sourcePath, origW, origH, grabber.frameRate,
+                )
+            }
 
             var idx = 0
             while (true) {
                 val frame: Frame = grabber.grabImage() ?: break
                 if (idx % (skipFrames + 1) == 0) {
-                    val img = converter.convert(frame) ?: continue
-                    val carry = onFrame(idx, img, grabber.imageWidth, grabber.imageHeight)
+                    val raw = converter.convert(frame) ?: continue
+                    // Апскейл если нужен; иначе отдаём как есть (без лишней копии)
+                    val img = if (scale > 1.0f) upscale(raw, outW, outH) else raw
+                    val carry = onFrame(idx, img, outW, outH)
                     if (!carry) return false
                 }
                 idx++
@@ -51,6 +77,25 @@ class VideoFrameReader {
             runCatching { grabber.stop() }
             runCatching { grabber.release() }
         }
+    }
+
+    /**
+     * Вычисляет коэффициент апскейла так, чтобы меньшая сторона была >= minFrameHeight.
+     * Возвращает 1.0 если видео уже достаточно большое.
+     */
+    fun upscaleRatio(width: Int, height: Int): Float {
+        val minSide = minOf(width, height)
+        return if (minSide < minFrameHeight) minFrameHeight.toFloat() / minSide else 1.0f
+    }
+
+    private fun upscale(src: BufferedImage, w: Int, h: Int): BufferedImage {
+        val dst = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
+        val g = dst.createGraphics()
+        // BILINEAR достаточно для апскейла видео и быстрее BICUBIC
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+        g.drawImage(src, 0, 0, w, h, null)
+        g.dispose()
+        return dst
     }
 
     /**
@@ -86,7 +131,6 @@ class VideoFrameReader {
     }
 
     fun encodeJpegBase64(img: BufferedImage, quality: Float): String {
-        // Ужмём заранее для экономии трафика
         val maxW = 800
         val src = if (img.width > maxW) {
             val ratio = maxW.toFloat() / img.width

@@ -33,29 +33,39 @@ ftp:
     external-address: ""
   analysis:
     line-y-ratio: 0.5
-    inside-on-top: true
+    inside-on-top: false   # по умолчанию салон снизу (камера смотрит сверху)
     auto-initial-onboard: true
     initial-onboard: 0
 
 pc:
-  videos-dir: ./videos   # ← добавить эту строку  models-dir: ./models
+  models-dir: ./models
+  videos-dir: ./videos
+  # Минимальная высота кадра для анализа. Если видео меньше — апскейлим.
+  # Все абсолютные пороги ниже рассчитаны под кадры >= этого значения.
+  min-frame-height: 480
   yolo-input-size: 416
   confidence-threshold: 0.35
   nms-iou-threshold: 0.5
   reid-similarity-threshold: 0.65
-  track-active-lost-frames: 120
+  track-active-lost-frames: 45          # было 120; при processEveryN=3 и 25fps ~7с реального времени
   track-center-distance-threshold-px: 90
-  side-fallback-max-distance-px: 1200
+  side-fallback-max-distance-px: 250    # было 1200; ограничиваем радиус воскрешения трека
   process-every-n-frames: 3
   emit-frame-every-ms: 120
   jpeg-quality: 0.45
   analysis-log-every-n-frames: 30
   door-zone-half-width-ratio: 0.04
-  door-zone-min-half-width-px: 10
+  door-zone-min-half-width-px: 16       # было 10; при min-frame-height=480 проём минимум 32px
   door-zone-max-half-width-px: 60
-  count-anchor-y-ratio: 0.55
-  count-min-anchor-movement-px: 35
-  count-center-line-crossing: true
+  count-anchor-y-ratio: 0.75            # было 0.55; для камеры сверху якорь ближе к ногам
+  count-min-anchor-movement-px: 40      # было 35; строже чтобы не считать топтание у линии
+  # false = засчитываем вход только когда трек стабильно оказался в зоне INSIDE.
+  # Надёжнее при узком кадре над дверью — исключает ложные срабатывания когда
+  # человек разворачивается в проёме или трек теряется до подтверждения зоны.
+  count-center-line-crossing: false     # было true
+  # Сколько кадров подряд трек должен быть в зоне чтобы она считалась стабильной.
+  # При processEveryN=3 и 25fps: 3 кадра ≈ ~1 секунда реального времени.
+  count-min-stable-frames: 3            # было hardcode 2
 
 analysis-results:
   persistence:

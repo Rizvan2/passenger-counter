@@ -37,12 +37,17 @@ data class PassengerCountEvent(
 
 @Service
 class CrossingLineCounter(
-    @Value("\${pc.count-anchor-y-ratio:0.55}") private val countAnchorYRatio: Float,
-    @Value("\${pc.count-min-anchor-movement-px:35}") private val minAnchorMovementPx: Float,
-    @Value("\${pc.count-center-line-crossing:true}") private val countCenterLineCrossing: Boolean,
+    @Value("\${pc.count-anchor-y-ratio:0.75}") private val countAnchorYRatio: Float,
+    @Value("\${pc.count-min-anchor-movement-px:40}") private val minAnchorMovementPx: Float,
+    // false = ждём стабильной зоны INSIDE/OUTSIDE (надёжнее при узком кадре над дверью).
+    // true  = считаем сразу при пересечении линии (быстрее, но даёт ложные срабатывания
+    //         если человек разворачивается в проёме или трек теряется до стабилизации).
+    @Value("\${pc.count-center-line-crossing:false}") private val countCenterLineCrossing: Boolean,
+    // Сколько кадров подряд трек должен находиться в одной зоне прежде чем она считается "стабильной".
+    // При processEveryN=3 и 25fps: 3 кадра ≈ 1 секунда реального времени.
+    @Value("\${pc.count-min-stable-frames:3}") private val minStableFrames: Int,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val minStableFrames = 2
 
     data class CountDelta(
         val boardings: Int,
@@ -72,9 +77,9 @@ class CrossingLineCounter(
 
         val delta = if (
             countCenterLineCrossing &&
-                !track.isBoarded &&
-                crossedCenterTowardInside(previousAnchorY, anchorY, zone) &&
-                movedTowardInside(track, zone)
+            !track.isBoarded &&
+            crossedCenterTowardInside(previousAnchorY, anchorY, zone) &&
+            movedTowardInside(track, zone)
         ) {
             countBoarding(track, frameIndex, "center line -> inside")
         } else if (track.stableZoneFrames < minStableFrames) {
@@ -99,14 +104,14 @@ class CrossingLineCounter(
         }
 
         if (log.isDebugEnabled && (
-                beforeLastZone != track.lastZone ||
-                    beforeStableZone != track.stableZone ||
-                    beforeState != track.countState ||
-                    beforeTransitionFrom != track.transitionFrom ||
-                    beforeBoarded != track.isBoarded ||
-                    beforeAlighted != track.isAlighted ||
-                    !delta.isEmpty
-                )
+                    beforeLastZone != track.lastZone ||
+                            beforeStableZone != track.stableZone ||
+                            beforeState != track.countState ||
+                            beforeTransitionFrom != track.transitionFrom ||
+                            beforeBoarded != track.isBoarded ||
+                            beforeAlighted != track.isAlighted ||
+                            !delta.isEmpty
+                    )
         ) {
             log.debug(
                 "Track count state: frame={}, track={}, anchorY={}, anchorRatio={}, movement={}, currentZone={}, lastZone {}->{}, stableZone {}->{} stableFrames {}->{}, state {}->{}, transition {}->{}, boarded {}->{}, alighted {}->{}, delta(boardings={}, alightings={})",

@@ -192,9 +192,21 @@ class AnalysisService(
 
         if (session.initialOnboardDetected) return
 
-        // If the configured side is wrong or the line cuts the frame poorly, still avoid a useless zero.
-        val fallbackVisibleCount = if (insideCount == 0 && detections.isNotEmpty()) detections.size else 0
-        val candidate = maxOf(insideCount, fallbackVisibleCount)
+        // Предупреждаем если линия выставлена так, что внутри никого нет — это признак
+        // неверного insideOnTop или неверного положения линии. Fallback убран намеренно:
+        // молчаливое использование всех детекций как "внутри" давало некорректное начальное
+        // заполнение когда салон снаружи кадра (все люди на улице).
+        if (insideCount == 0 && detections.isNotEmpty() && session.initialOnboardFrames == 0) {
+            log.warn(
+                "Initial onboard: no detections in INSIDE zone for session {} (visible={}, insideOnTop={}). " +
+                        "Check lineYRatio and insideOnTop settings — line may be cutting the wrong side.",
+                session.id,
+                detections.size,
+                doorZone.insideOnTop,
+            )
+        }
+
+        val candidate = insideCount
 
         if (candidate > session.initialOnboardCandidate) {
             session.initialOnboardCandidate = candidate

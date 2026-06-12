@@ -93,7 +93,7 @@ const previewWrap  = $("previewWrap");
 const previewCv    = $("previewCanvas");
 const previewCtx   = previewCv.getContext("2d");
 
-let lineRatio = 0.5;
+let lineRatio = 0.7;
 let frameImg  = null;
 let dragging  = false;
 
