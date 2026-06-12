@@ -29,6 +29,7 @@ class AnalysisSession(
     val startedAt: Long = System.currentTimeMillis()
     @Volatile var finishedAt: Long? = null
 
+    fun durationMs(): Long = (finishedAt ?: System.currentTimeMillis()) - startedAt
 }
 
 enum class SessionStatus { RUNNING, FINISHED, STOPPED, FAILED }

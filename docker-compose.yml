@@ -1,18 +1,59 @@
 services:
+  postgres:
+    image: postgres:16
+    container_name: passenger-counter-postgres
+    environment:
+      POSTGRES_DB: passenger_counter
+      POSTGRES_USER: passenger_counter
+      POSTGRES_PASSWORD: passenger_counter
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U passenger_counter -d passenger_counter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   app:
     build: .
     container_name: passenger-counter
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
+      - "2021:2021"
+      - "30000-30009:30000-30009"
     volumes:
       # Видео файлы — кладёшь сюда и используешь путь /videos/имя.mp4 в UI
       - ./videos:/videos:ro
       # Кеш моделей чтобы не качались заново при пересборке
       - ./models:/app/models
+      # FTP-вход для MDVR
+      - ./ftp:/app/ftp
     environment:
       JAVA_OPTS: "-Xms256m -Xmx2g"
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/passenger_counter"
+      SPRING_DATASOURCE_USERNAME: "passenger_counter"
+      SPRING_DATASOURCE_PASSWORD: "passenger_counter"
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: "org.postgresql.Driver"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
+      ANALYSIS_RESULTS_PERSISTENCE_ENABLED: "true"
+      FTP_PORT: "2021"
+      FTP_USER: "admin"
+      FTP_PASSWORD: "admin"
+      FTP_HOME: "/app/ftp/incoming"
+      FTP_PROCESSED_DIR: "/app/ftp/processed"
+      FTP_PASSIVE_PORTS: "30000-30009"
+      FTP_PASSIVE_EXTERNAL_ADDRESS: ""
     # Явные DNS на случай если у Docker проблемы с резолвом HuggingFace
     dns:
       - 1.1.1.1
       - 8.8.8.8
     restart: unless-stopped
+
+volumes:
+  postgres-data:

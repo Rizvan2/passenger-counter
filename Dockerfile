@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/build/libs/*.jar app.jar
 
 # Папка с моделями (скачаются при первом запуске)
-RUN mkdir -p /app/models /app/videos
+RUN mkdir -p /app/models /app/videos /app/ftp/incoming /app/ftp/processed
 
 EXPOSE 8080
 

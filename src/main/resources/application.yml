@@ -10,9 +10,35 @@ spring:
     multipart:
       max-file-size: 500MB
       max-request-size: 500MB
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:}
+    username: ${SPRING_DATASOURCE_USERNAME:}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:org.h2.Driver}
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    properties:
+      hibernate:
+        format_sql: true
+
+ftp:
+  port: 2021
+  user: admin
+  password: admin
+  home: ./videos/incoming
+  processed-dir: ./videos/processed
+  passive:
+    ports: 30000-30009
+    external-address: ""
+  analysis:
+    line-y-ratio: 0.5
+    inside-on-top: true
+    auto-initial-onboard: true
+    initial-onboard: 0
 
 pc:
-  models-dir: ./models
+  videos-dir: ./videos   # ← добавить эту строку  models-dir: ./models
   yolo-input-size: 416
   confidence-threshold: 0.35
   nms-iou-threshold: 0.5
@@ -30,6 +56,10 @@ pc:
   count-anchor-y-ratio: 0.55
   count-min-anchor-movement-px: 35
   count-center-line-crossing: true
+
+analysis-results:
+  persistence:
+    enabled: ${ANALYSIS_RESULTS_PERSISTENCE_ENABLED:false}
 
 logging:
   level:

@@ -8,9 +8,11 @@ import ru.rtds.pc.dto.BoxDto
 import ru.rtds.pc.dto.FrameUpdateDto
 import ru.rtds.pc.dto.PassengerEventDto
 import ru.rtds.pc.dto.SessionFinishedDto
+import ru.rtds.pc.ftp.service.UploadedVideoCleanupService
 import ru.rtds.pc.model.AnalysisSession
 import ru.rtds.pc.model.DoorZoneSide
 import ru.rtds.pc.model.SessionStatus
+import ru.rtds.pc.persistence.analysis.AnalysisResultPersistenceService
 import ru.rtds.pc.websocket.AnalysisWebSocketHandler
 import java.io.File
 
@@ -21,6 +23,8 @@ class AnalysisService(
     private val tracker: PersonTracker,
     private val crossingCounter: CrossingLineCounter,
     private val wsHandler: AnalysisWebSocketHandler,
+    private val analysisResultPersistenceService: AnalysisResultPersistenceService,
+    private val uploadedVideoCleanupService: UploadedVideoCleanupService,
     @Value("\${pc.process-every-n-frames}") private val processEveryN: Int,
     @Value("\${pc.emit-frame-every-ms}") private val emitEveryMs: Long,
     @Value("\${pc.jpeg-quality}") private val jpegQuality: Float,
@@ -44,6 +48,8 @@ class AnalysisService(
         } finally {
             session.finishedAt = System.currentTimeMillis()
             sendFinished(session)
+            analysisResultPersistenceService.save(session)
+            uploadedVideoCleanupService.afterAnalysis(session.sourcePath, session.status)
             wsHandler.close(session.id)
             tracker.clear(session.id)
         }
@@ -290,7 +296,7 @@ class AnalysisService(
                 totalAlightings = session.totalAlightings.get(),
                 finalOnboard = session.currentOnboard,
                 framesProcessed = session.framesProcessed,
-                durationMs = (session.finishedAt ?: System.currentTimeMillis()) - session.startedAt,
+                durationMs = session.durationMs(),
                 errorMessage = session.errorMessage,
             )
         )
