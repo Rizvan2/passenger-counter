@@ -25,8 +25,8 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
-      - "2021:2021"
-      - "30000-30009:30000-30009"
+      - "2022:2022"
+      - "30000:30000"
     volumes:
       # Видео файлы — кладёшь сюда и используешь путь /videos/имя.mp4 в UI
       - ./videos:/videos:ro
@@ -42,13 +42,13 @@ services:
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: "org.postgresql.Driver"
       SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
       ANALYSIS_RESULTS_PERSISTENCE_ENABLED: "true"
-      FTP_PORT: "2021"
+      FTP_PORT: "2022"
       FTP_USER: "admin"
       FTP_PASSWORD: "admin"
       FTP_HOME: "/app/ftp/incoming"
       FTP_PROCESSED_DIR: "/app/ftp/processed"
-      FTP_PASSIVE_PORTS: "30000-30009"
-      FTP_PASSIVE_EXTERNAL_ADDRESS: ""
+      FTP_PASSIVE_PORTS: "30000"
+      FTP_PASSIVE_EXTERNAL_ADDRESS: "188.0.180.102"
     # Явные DNS на случай если у Docker проблемы с резолвом HuggingFace
     dns:
       - 1.1.1.1

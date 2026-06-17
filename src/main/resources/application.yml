@@ -23,7 +23,7 @@ spring:
         format_sql: true
 
 ftp:
-  port: 2021
+  port: 2022
   user: admin
   password: admin
   home: ./videos/incoming

@@ -15,6 +15,35 @@ class UploadCompletionFtplet(
 ) : DefaultFtplet() {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    override fun onConnect(session: FtpSession): FtpletResult {
+        log.info(
+            "FTP client connected: remote={}, local={}, session={}",
+            formatAddress(session.clientAddress),
+            formatAddress(session.serverAddress),
+            session.sessionId,
+        )
+        return FtpletResult.DEFAULT
+    }
+
+    override fun onLogin(session: FtpSession, request: FtpRequest): FtpletResult {
+        log.info(
+            "FTP client logged in: user={}, remote={}, session={}",
+            session.user?.name ?: session.userArgument ?: request.argument,
+            formatAddress(session.clientAddress),
+            session.sessionId,
+        )
+        return FtpletResult.DEFAULT
+    }
+
+    override fun onDisconnect(session: FtpSession): FtpletResult {
+        log.info(
+            "FTP client disconnected: remote={}, session={}",
+            formatAddress(session.clientAddress),
+            session.sessionId,
+        )
+        return FtpletResult.DEFAULT
+    }
+
     override fun onUploadEnd(session: FtpSession, request: FtpRequest): FtpletResult {
         val relativePath = request.argument.trim().removePrefix("/")
         if (relativePath.isBlank()) {
@@ -39,5 +68,13 @@ class UploadCompletionFtplet(
         }
 
         return FtpletResult.DEFAULT
+    }
+
+    private fun formatAddress(address: java.net.InetSocketAddress?): String {
+        if (address == null) {
+            return "unknown"
+        }
+        val host = address.address?.hostAddress ?: address.hostString
+        return "$host:${address.port}"
     }
 }
