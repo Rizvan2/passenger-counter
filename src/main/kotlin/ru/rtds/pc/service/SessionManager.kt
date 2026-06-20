@@ -4,6 +4,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import ru.rtds.pc.model.AnalysisSession
 import ru.rtds.pc.model.VideoSource
+import ru.rtds.pc.model.VideoMetadata
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -22,9 +23,11 @@ class SessionManager {
         sourceHash: String? = null,
     ): AnalysisSession {
         val id = UUID.randomUUID().toString()
+        val videoMetadata = VideoMetadata.fromPath(videoPath)
         val s = AnalysisSession(
             id                 = id,
             sourcePath         = videoPath,
+            videoMetadata      = videoMetadata,
             lineYRatio         = lineYRatio,
             insideOnTop        = insideOnTop,
             autoInitialOnboard = autoInitialOnboard,

@@ -45,12 +45,15 @@ class UploadCompletionFtplet(
     }
 
     override fun onUploadEnd(session: FtpSession, request: FtpRequest): FtpletResult {
-        val relativePath = request.argument.trim().removePrefix("/")
-        if (relativePath.isBlank()) {
+        val argument = request.argument.orEmpty()
+        if (argument.isBlank()) {
             return FtpletResult.DEFAULT
         }
 
-        val uploadedFile = homeDir.resolve(relativePath).normalize()
+        val uploadedFile = runCatching { requestedUploadPath(session, argument) }.getOrElse {
+            log.warn("Rejected FTP upload with invalid path: {}", argument, it)
+            return FtpletResult.DEFAULT
+        }
         if (!uploadedFile.startsWith(homeDir)) {
             log.warn("Rejected FTP upload outside home directory: {}", uploadedFile)
             return FtpletResult.DEFAULT
@@ -68,6 +71,40 @@ class UploadCompletionFtplet(
         }
 
         return FtpletResult.DEFAULT
+    }
+
+    private fun requestedUploadPath(session: FtpSession, argument: String): Path {
+        val physicalFile = runCatching { session.fileSystemView?.getFile(argument)?.physicalFile }.getOrNull()
+        val targetFromFtpView = when (physicalFile) {
+            is Path -> physicalFile
+            is java.io.File -> physicalFile.toPath()
+            is String -> Path.of(physicalFile)
+            else -> null
+        }
+        if (targetFromFtpView != null) {
+            val target = targetFromFtpView.toAbsolutePath().normalize()
+            require(target.startsWith(homeDir)) {
+                "Resolved upload path escapes FTP home: $argument -> $target"
+            }
+            return target
+        }
+
+        val ftpPath = argument.trim().trim('"').replace('\\', '/')
+        val relative = if (ftpPath.startsWith("/")) {
+            ftpPath.removePrefix("/")
+        } else {
+            val cwd = session.fileSystemView?.workingDirectory?.absolutePath
+                ?.trim()
+                ?.replace('\\', '/')
+                ?.trim('/')
+                .orEmpty()
+            listOf(cwd, ftpPath).filter { it.isNotBlank() }.joinToString("/")
+        }
+        val target = homeDir.resolve(relative).normalize()
+        require(target.startsWith(homeDir)) {
+            "Requested upload path escapes FTP home: $argument"
+        }
+        return target
     }
 
     private fun formatAddress(address: java.net.InetSocketAddress?): String {

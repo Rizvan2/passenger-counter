@@ -15,10 +15,40 @@ class AnalysisResultEntity(
     @Column(name = "source_path", nullable = false, columnDefinition = "text")
     var sourcePath: String = "",
 
+    @Column(name = "original_relative_path", columnDefinition = "text")
+    var originalRelativePath: String? = null,
+
     // Имя файла отдельно от пути — путь меняется когда файл перемещается
     // в processed/, а имя остаётся стабильным идентификатором записи
     @Column(name = "video_name", nullable = false, length = 512)
     var videoName: String = "",
+
+    @Column(name = "device_id", length = 32)
+    var videoDeviceId: String? = null,
+
+    @Column(name = "record_date", length = 16)
+    var recordDate: String? = null,
+
+    @Column(name = "channel_no")
+    var channel: Int? = null,
+
+    @Column(name = "event_code", length = 32)
+    var eventCode: String? = null,
+
+    @Column(name = "record_type")
+    var recordType: Int? = null,
+
+    @Column(name = "clip_started_at_ms")
+    var clipStartedAtMs: Long? = null,
+
+    @Column(name = "clip_finished_at_ms")
+    var clipFinishedAtMs: Long? = null,
+
+    @Column(name = "file_flag")
+    var fileFlag: Int? = null,
+
+    @Column(name = "file_uid")
+    var fileUid: Long? = null,
 
     // SHA-256 файла — для персистентного дедупа при рестарте приложения.
     // Без этого повторная store-and-forward доставка одного файла

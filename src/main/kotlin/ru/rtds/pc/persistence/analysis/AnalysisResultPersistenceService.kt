@@ -19,13 +19,24 @@ class AnalysisResultPersistenceService(
         val videoName = runCatching {
             Paths.get(session.sourcePath).fileName.toString()
         }.getOrDefault(session.sourcePath)
+        val metadata = session.videoMetadata
 
         runCatching {
             analysisResultRepository.save(
                 AnalysisResultEntity(
                     sessionId       = session.id,
                     sourcePath      = session.sourcePath,
+                    originalRelativePath = metadata.originalRelativePath,
                     videoName       = videoName,
+                    videoDeviceId   = metadata.videoDeviceId,
+                    recordDate      = metadata.recordDateText,
+                    channel         = metadata.channel,
+                    eventCode       = metadata.eventCode,
+                    recordType      = metadata.recordType,
+                    clipStartedAtMs = metadata.clipStartedAtMs,
+                    clipFinishedAtMs = metadata.clipFinishedAtMs,
+                    fileFlag        = metadata.fileFlag,
+                    fileUid         = metadata.fileUid,
                     sourceHash      = session.sourceHash,
                     source          = session.source.name,
                     status          = session.status.name,
@@ -43,8 +54,8 @@ class AnalysisResultPersistenceService(
                 )
             )
             log.info(
-                "Analysis result saved: session={}, source={}, video={}",
-                session.id, session.source, videoName,
+                "Analysis result saved: session={}, source={}, video={}, videoDeviceId={}",
+                session.id, session.source, videoName, metadata.videoDeviceId,
             )
         }.onFailure {
             log.error("Failed to save analysis result for session {}", session.id, it)

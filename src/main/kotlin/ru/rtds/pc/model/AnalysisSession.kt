@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class AnalysisSession(
     val id: String,
     val sourcePath: String,
+    val videoMetadata: VideoMetadata = VideoMetadata.fromPath(sourcePath),
     val lineYRatio: Float,
     val insideOnTop: Boolean = true,
     val autoInitialOnboard: Boolean = true,

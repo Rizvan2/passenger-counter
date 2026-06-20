@@ -1,2 +1,9 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<FileList></FileList>
+<?xml version="1.0" encoding="GB2312"?>
+<ROOT>
+    <TASK>
+        <CHANNEL>1</CHANNEL>
+        <TYPE>1</TYPE>
+        <STARTTIME>20260616110000</STARTTIME>
+        <ENDTIME>20260617113000</ENDTIME>
+    </TASK>
+</ROOT>
