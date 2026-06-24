@@ -19,7 +19,7 @@ COPY --from=builder /app/build/libs/*.jar app.jar
 
 RUN mkdir -p /app/models /app/videos /app/ftp/incoming /app/ftp/processed
 
-EXPOSE 8081 2022 30000-30009
+EXPOSE 8081 2022 30000
 
 ENV JAVA_OPTS="-Xms256m -Xmx2g"
 ENV PC_MODELS_DIR=/app/models
