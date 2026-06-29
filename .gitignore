@@ -6,8 +6,7 @@ out/
 
 # Модели и видео — большие файлы
 models/*.onnx
-videos/*
-
-# Сохранить структуру папок
-!videos/.gitkeep
 !models/.gitkeep
+videos/**/*
+!videos/**/
+!videos/**/.gitkeep
