@@ -26,7 +26,7 @@ services:
     ports:
       - "8081:8081"
       - "2022:2022"
-      - "30000:30000"
+      - "30000-30010:30000-30010"
     volumes:
       # Видео файлы — кладёшь сюда и используешь путь /videos/имя.mp4 в UI
       - ./videos:/videos:ro
@@ -47,7 +47,7 @@ services:
       FTP_PASSWORD: "admin"
       FTP_HOME: "/app/ftp/incoming"
       FTP_PROCESSED_DIR: "/app/ftp/processed"
-      FTP_PASSIVE_PORTS: "30000"
+      FTP_PASSIVE_PORTS: "30000-30010"
       FTP_PASSIVE_EXTERNAL_ADDRESS: "188.0.180.102"
     # Явные DNS на случай если у Docker проблемы с резолвом HuggingFace
     dns:

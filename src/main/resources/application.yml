@@ -29,7 +29,7 @@ ftp:
   home: ./videos/incoming
   processed-dir: ./videos/processed
   passive:
-    ports: 30000
+    ports: 30000-30010
     external-address: ""
   # true  = тестовый режим: ролик перемещается в processed/<статус>/ после анализа
   #         (виден через интерфейс, можно проверить результат вручную)

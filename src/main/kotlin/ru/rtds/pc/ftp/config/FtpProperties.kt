@@ -17,7 +17,7 @@ data class FtpProperties(
     val keepAfterAnalysis: Boolean = true,
 ) {
     data class Passive(
-        val ports: String = "30000",
+        val ports: String = "30000-30010",
         val externalAddress: String = "",
     )
 
