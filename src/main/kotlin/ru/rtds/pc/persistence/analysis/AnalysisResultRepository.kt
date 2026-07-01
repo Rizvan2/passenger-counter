@@ -9,24 +9,6 @@ import org.springframework.data.repository.query.Param
 interface AnalysisResultRepository : JpaRepository<AnalysisResultEntity, String> {
     fun existsBySourceHash(sourceHash: String): Boolean
 
-    fun existsBySourceHashAndStatus(sourceHash: String, status: String): Boolean
-
-    fun existsByOriginalRelativePathAndStatus(originalRelativePath: String, status: String): Boolean
-
-    fun existsByVideoDeviceIdAndFileUidAndStatus(
-        videoDeviceId: String,
-        fileUid: Long,
-        status: String,
-    ): Boolean
-
-    @Query(
-        """
-        SELECT r.sourceHash FROM AnalysisResultEntity r
-        WHERE r.status = :status AND r.sourceHash IS NOT NULL
-        """,
-    )
-    fun findSourceHashesByStatus(@Param("status") status: String): List<String>
-
     @Query(
         """
         SELECT r FROM AnalysisResultEntity r

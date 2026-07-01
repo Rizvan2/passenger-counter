@@ -26,15 +26,6 @@ data class FramePreviewDto(
     val height: Int,
 )
 
-data class VideoInfoDto(
-    val path: String,
-    val width: Int,
-    val height: Int,
-    val frameRate: Double,
-    val lengthInFrames: Long,
-    val durationMs: Long,
-)
-
 @RestController
 @RequestMapping("/api/videos")
 @CrossOrigin(originPatterns = ["*"])
@@ -48,17 +39,18 @@ class VideoController(
 
     /**
      * GET /api/videos
-     * Возвращает список видеофайлов из videos/{deviceId}/{YYYY-MM-DD}/.
+     * Возвращает список видеофайлов из папки videos (рекурсивно, глубина 2).
      */
     @GetMapping
     fun listVideos(): ResponseEntity<List<VideoFileDto>> {
         val root = Paths.get(videosDir).toAbsolutePath().normalize()
         if (!Files.exists(root)) return ResponseEntity.ok(emptyList())
 
-        val videos = Files.walk(root, 4)
+        val videos = Files.walk(root, 2)
             .filter { Files.isRegularFile(it) }
             .filter { it.fileName.toString().substringAfterLast('.').lowercase() in videoExtensions }
-            .filter { !isUnderProcessedDir(it, root) }
+            // исключаем incoming — это FTP-буфер, там недокачанные файлы
+            .filter { !it.toString().contains("incoming") }
             .map { toDto(it) }
             .sorted(compareByDescending { it.modified })
             .toList()
@@ -67,67 +59,34 @@ class VideoController(
     }
 
     /**
-     * GET /api/videos/info?path=...
-     * Метаданные видео для таймлайна в UI.
-     */
-    @GetMapping("/info")
-    fun info(@RequestParam path: String): ResponseEntity<VideoInfoDto> {
-        val file = resolveReadableVideo(path) ?: return ResponseEntity.notFound().build()
-        val probe = frameReader.probe(file.absolutePath) ?: return ResponseEntity.internalServerError().build()
-        return ResponseEntity.ok(
-            VideoInfoDto(
-                path = file.absolutePath,
-                width = probe.width,
-                height = probe.height,
-                frameRate = probe.frameRate,
-                lengthInFrames = probe.lengthInFrames,
-                durationMs = probe.durationMs,
-            ),
-        )
-    }
-
-    /**
-     * GET /api/videos/preview?path=...&frameIndex=0
-     * Возвращает кадр указанного видеофайла в виде JPEG base64.
+     * GET /api/videos/preview?path=...
+     * Возвращает первый кадр указанного видеофайла в виде JPEG base64.
      */
     @GetMapping("/preview")
-    fun preview(
-        @RequestParam path: String,
-        @RequestParam(defaultValue = "0") frameIndex: Int,
-    ): ResponseEntity<FramePreviewDto> {
-        val file = resolveReadableVideo(path) ?: return ResponseEntity.notFound().build()
-        val safeFrameIndex = frameIndex.coerceAtLeast(0)
+    fun preview(@RequestParam path: String): ResponseEntity<FramePreviewDto> {
+        val file = File(path)
+        if (!file.exists() || !file.canRead()) {
+            return ResponseEntity.notFound().build()
+        }
+
+        // Защита от path traversal: файл должен лежать внутри videosDir
+        val root = Paths.get(videosDir).toAbsolutePath().normalize()
+        val target = file.toPath().toAbsolutePath().normalize()
+        if (!target.startsWith(root)) {
+            return ResponseEntity.badRequest().build()
+        }
+
         var previewDto: FramePreviewDto? = null
 
-        frameReader.process(file.absolutePath, skipFrames = 0) { idx, img, w, h ->
-            if (idx < safeFrameIndex) {
-                return@process true
-            }
+        // Читаем только первый кадр через уже существующий VideoFrameReader
+        frameReader.process(path, skipFrames = 0) { _, img, w, h ->
             val jpegBase64 = frameReader.encodeJpegBase64(img, 0.75f)
             previewDto = FramePreviewDto(jpegBase64, w, h)
-            false
+            false // false = стоп после первого кадра
         }
 
         return previewDto?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.internalServerError().build()
-    }
-
-    private fun resolveReadableVideo(path: String): File? {
-        val file = File(path)
-        if (!file.exists() || !file.canRead()) {
-            return null
-        }
-        val root = Paths.get(videosDir).toAbsolutePath().normalize()
-        val target = file.toPath().toAbsolutePath().normalize()
-        if (!target.startsWith(root) || isUnderProcessedDir(target, root)) {
-            return null
-        }
-        return file
-    }
-
-    private fun isUnderProcessedDir(path: Path, root: Path): Boolean {
-        val relative = runCatching { root.relativize(path.toAbsolutePath().normalize()) }.getOrNull() ?: return false
-        return relative.nameCount > 0 && relative.getName(0).toString().equals("processed", ignoreCase = true)
     }
 
     private fun toDto(path: Path): VideoFileDto {

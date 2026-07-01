@@ -3,6 +3,7 @@ package ru.rtds.pc.service
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import ru.rtds.pc.model.AnalysisSession
+import ru.rtds.pc.model.NormalizedPoint
 import ru.rtds.pc.model.VideoSource
 import ru.rtds.pc.model.VideoMetadata
 import java.util.UUID
@@ -15,8 +16,14 @@ class SessionManager {
 
     fun create(
         videoPath: String,
-        lineYRatio: Float,
-        insideOnTop: Boolean,
+        salonPolygon: List<NormalizedPoint>,
+        streetPolygon: List<NormalizedPoint>,
+        doorPolygon: List<NormalizedPoint>,
+        lineAxRatio: Float,
+        lineAyRatio: Float,
+        lineBxRatio: Float,
+        lineByRatio: Float,
+        insideOnPositiveSide: Boolean,
         autoInitialOnboard: Boolean,
         initialOnboard: Int,
         source: VideoSource = VideoSource.MANUAL,
@@ -28,8 +35,14 @@ class SessionManager {
             id                 = id,
             sourcePath         = videoPath,
             videoMetadata      = videoMetadata,
-            lineYRatio         = lineYRatio,
-            insideOnTop        = insideOnTop,
+            salonPolygon       = salonPolygon,
+            streetPolygon      = streetPolygon,
+            doorPolygon        = doorPolygon,
+            lineAxRatio        = lineAxRatio,
+            lineAyRatio        = lineAyRatio,
+            lineBxRatio        = lineBxRatio,
+            lineByRatio        = lineByRatio,
+            insideOnPositiveSide = insideOnPositiveSide,
             autoInitialOnboard = autoInitialOnboard,
             initialOnboard     = initialOnboard,
             source             = source,

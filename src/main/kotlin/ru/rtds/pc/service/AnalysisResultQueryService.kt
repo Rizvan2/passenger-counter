@@ -1,15 +1,20 @@
 package ru.rtds.pc.service
 
+import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import ru.rtds.pc.dto.AnalysisResultResponse
+import ru.rtds.pc.dto.LinePointDto
+import ru.rtds.pc.model.NormalizedPoint
 import ru.rtds.pc.persistence.analysis.AnalysisResultEntity
 import ru.rtds.pc.persistence.analysis.AnalysisResultRepository
 
 @Service
 class AnalysisResultQueryService(
     private val analysisResultRepository: AnalysisResultRepository,
+    private val objectMapper: ObjectMapper,
 ) {
     fun findAll(
         from: Long?,
@@ -59,10 +64,26 @@ class AnalysisResultQueryService(
             initialOnboard = entity.initialOnboard,
             framesProcessed = entity.framesProcessed,
             durationMs = entity.durationMs,
+            salonPolygon = parsePolygon(entity.salonPolygonJson),
+            streetPolygon = parsePolygon(entity.streetPolygonJson),
+            doorPolygon = parsePolygon(entity.doorPolygonJson),
             lineYRatio = entity.lineYRatio,
             insideOnTop = entity.insideOnTop,
+            lineAxRatio = entity.lineAxRatio ?: 0f,
+            lineAyRatio = entity.lineAyRatio ?: entity.lineYRatio,
+            lineBxRatio = entity.lineBxRatio ?: 1f,
+            lineByRatio = entity.lineByRatio ?: entity.lineYRatio,
+            insideOnPositiveSide = entity.insideOnPositiveSide ?: !entity.insideOnTop,
             startedAtMs = entity.startedAtMs,
             finishedAtMs = entity.finishedAtMs,
             errorMessage = entity.errorMessage,
         )
+
+    private fun parsePolygon(json: String?): List<LinePointDto> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            objectMapper.readValue(json, object : TypeReference<List<NormalizedPoint>>() {})
+                .map { LinePointDto(it.x, it.y) }
+        }.getOrElse { emptyList() }
+    }
 }

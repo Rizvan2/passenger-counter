@@ -7,25 +7,7 @@ import ru.rtds.pc.model.CountedDirection
 import ru.rtds.pc.model.DoorZoneSide
 import ru.rtds.pc.model.TrackCountState
 import ru.rtds.pc.model.TrackedPerson
-
-data class DoorCountingZone(
-    val centerY: Float,
-    val halfWidthPx: Float,
-    val insideOnTop: Boolean = true,
-) {
-    val topBoundaryY: Float get() = centerY - halfWidthPx
-    val bottomBoundaryY: Float get() = centerY + halfWidthPx
-
-    fun sideFor(anchorY: Float): DoorZoneSide {
-        val isAbove = anchorY < topBoundaryY
-        val isBelow = anchorY > bottomBoundaryY
-        return when {
-            isAbove -> if (insideOnTop) DoorZoneSide.INSIDE else DoorZoneSide.OUTSIDE
-            isBelow -> if (insideOnTop) DoorZoneSide.OUTSIDE else DoorZoneSide.INSIDE
-            else -> DoorZoneSide.DOORWAY
-        }
-    }
-}
+import kotlin.math.hypot
 
 data class PassengerCountEvent(
     val trackId: Int,
@@ -37,14 +19,14 @@ data class PassengerCountEvent(
 
 @Service
 class CrossingLineCounter(
-    @Value("\${pc.count-anchor-y-ratio:0.75}") private val countAnchorYRatio: Float,
+    @Value("\${pc.count-anchor-x-ratio:0.5}") private val countAnchorXRatio: Float,
+    @Value("\${pc.count-anchor-y-ratio:0.5}") private val countAnchorYRatio: Float,
     @Value("\${pc.count-min-anchor-movement-px:40}") private val minAnchorMovementPx: Float,
-    // false = ждём стабильной зоны INSIDE/OUTSIDE (надёжнее при узком кадре над дверью).
-    // true  = считаем сразу при пересечении линии (быстрее, но даёт ложные срабатывания
-    //         если человек разворачивается в проёме или трек теряется до стабилизации).
-    @Value("\${pc.count-center-line-crossing:false}") private val countCenterLineCrossing: Boolean,
-    // Сколько кадров подряд трек должен находиться в одной зоне прежде чем она считается "стабильной".
-    // При processEveryN=3 и 25fps: 3 кадра ≈ 1 секунда реального времени.
+    @Value("\${pc.count-head-scale-grow-ratio:1.08}") private val headScaleGrowRatio: Float,
+    @Value("\${pc.count-head-scale-shrink-ratio:0.92}") private val headScaleShrinkRatio: Float,
+    @Value("\${pc.count-scale-window:5}") private val scaleWindow: Int,
+    @Value("\${pc.count-lost-at-door-frames:3}") private val lostAtDoorFrames: Int,
+    @Value("\${pc.count-min-door-exit-visible-frames:12}") private val minDoorExitVisibleFrames: Int,
     @Value("\${pc.count-min-stable-frames:3}") private val minStableFrames: Int,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -59,256 +41,331 @@ class CrossingLineCounter(
 
     fun updateTrackState(
         track: TrackedPerson,
-        zone: DoorCountingZone,
-        frameIndex: Int
+        zones: CountingZones,
+        frameIndex: Int,
+        allowPreboardedExit: Boolean = false,
     ): CountDelta {
-        val beforeLastZone = track.lastZone
+        if (track.framesSinceUpdate > 0) {
+            return onLostTrack(track, frameIndex, allowPreboardedExit)
+        }
+
         val beforeStableZone = track.stableZone
-        val beforeStableFrames = track.stableZoneFrames
         val beforeState = track.countState
-        val beforeTransitionFrom = track.transitionFrom
         val beforeBoarded = track.isBoarded
         val beforeAlighted = track.isAlighted
-        val previousAnchorY = track.lastAnchorY
-        val anchorY = track.detection.anchorY(countAnchorYRatio)
-        updateAnchorHistory(track, anchorY)
-        val currentZone = zone.sideFor(anchorY)
-        updateStableZone(track, currentZone)
+        val previousStableAnchorX = track.stableAnchorX
+        val previousStableAnchorY = track.stableAnchorY
+        val previousStableZone = track.stableZone
+        val previousStableHeadSize = track.lastStableHeadSize
 
-        val delta = if (
-            countCenterLineCrossing &&
-            !track.isBoarded &&
-            crossedCenterTowardInside(previousAnchorY, anchorY, zone) &&
-            movedTowardInside(track, zone)
-        ) {
-            countBoarding(track, frameIndex, "center line -> inside")
-        } else if (track.stableZoneFrames < minStableFrames) {
-            CountDelta(0, 0)
-        } else if (track.isAlighted && track.lastZone == DoorZoneSide.INSIDE) {
-            // Count rollback must win over the generic state machine. This keeps the
-            // counters symmetric: onboard passenger leaves and returns => cancel exit;
-            // outside passenger enters and returns => cancel entry.
-            cancelAlighting(track, frameIndex)
-        } else if (track.isBoarded && track.lastZone == DoorZoneSide.OUTSIDE) {
-            cancelBoarding(track, frameIndex)
-        } else {
-            when (track.countState) {
-                TrackCountState.UNKNOWN -> initialize(track, zone, frameIndex)
-                TrackCountState.OUTSIDE -> fromOutside(track, frameIndex)
-                TrackCountState.INSIDE -> fromInside(track, zone, frameIndex)
-                TrackCountState.IN_DOORWAY_FROM_OUTSIDE -> confirmFromOutside(track, frameIndex)
-                TrackCountState.IN_DOORWAY_FROM_INSIDE -> confirmFromInside(track, zone, frameIndex)
-                TrackCountState.BOARDED -> handleBoarded(track, frameIndex)
-                TrackCountState.ALIGHTED -> handleAlighted(track, frameIndex)
-            }
+        val anchorX = track.detection.anchorX(countAnchorXRatio)
+        val anchorY = track.detection.anchorY(countAnchorYRatio)
+        val currentZone = zones.zoneFor(anchorX, anchorY)
+        val inDoor = zones.inDoor(anchorX, anchorY)
+
+        updateVisibleObservation(track, frameIndex, currentZone, inDoor, anchorX, anchorY)
+        val stableChanged = updateStableZone(track, currentZone, anchorX, anchorY)
+
+        val delta = when {
+            track.isBoarded && stableChanged && track.stableZone == DoorZoneSide.OUTSIDE ->
+                cancelBoarding(track, frameIndex)
+            track.isAlighted && stableChanged && track.stableZone == DoorZoneSide.INSIDE ->
+                cancelAlighting(track, frameIndex)
+            stableChanged && track.stableZone == DoorZoneSide.INSIDE ->
+                onStableInside(track, frameIndex, previousStableZone, previousStableAnchorX, previousStableAnchorY, previousStableHeadSize)
+            stableChanged && track.stableZone == DoorZoneSide.OUTSIDE ->
+                onStableOutside(
+                    track,
+                    frameIndex,
+                    previousStableZone,
+                    previousStableAnchorX,
+                    previousStableAnchorY,
+                    previousStableHeadSize,
+                    allowPreboardedExit,
+                )
+            else -> CountDelta(0, 0)
         }
 
         if (log.isDebugEnabled && (
-                    beforeLastZone != track.lastZone ||
-                            beforeStableZone != track.stableZone ||
-                            beforeState != track.countState ||
-                            beforeTransitionFrom != track.transitionFrom ||
-                            beforeBoarded != track.isBoarded ||
-                            beforeAlighted != track.isAlighted ||
-                            !delta.isEmpty
-                    )
+                beforeStableZone != track.stableZone ||
+                    beforeState != track.countState ||
+                    beforeBoarded != track.isBoarded ||
+                    beforeAlighted != track.isAlighted ||
+                    !delta.isEmpty
+                )
         ) {
             log.debug(
-                "Track count state: frame={}, track={}, anchorY={}, anchorRatio={}, movement={}, currentZone={}, lastZone {}->{}, stableZone {}->{} stableFrames {}->{}, state {}->{}, transition {}->{}, boarded {}->{}, alighted {}->{}, delta(boardings={}, alightings={})",
+                "Track count state: frame={}, track={}, zone={}, stableZone={}, state={}, inDoor={}, stableFrames={}, headRatio={}, boarded={}, alighted={}, delta(boardings={}, alightings={})",
                 frameIndex,
                 track.id,
-                "%.1f".format(anchorY),
-                "%.2f".format(countAnchorYRatio),
-                "%.1f".format(anchorMovement(track)),
                 currentZone,
-                beforeLastZone,
-                track.lastZone,
-                beforeStableZone,
                 track.stableZone,
-                beforeStableFrames,
-                track.stableZoneFrames,
-                beforeState,
                 track.countState,
-                beforeTransitionFrom,
-                track.transitionFrom,
-                beforeBoarded,
+                inDoor,
+                track.stableZoneFrames,
+                "%.3f".format(headRatio(track)),
                 track.isBoarded,
-                beforeAlighted,
                 track.isAlighted,
                 delta.boardings,
                 delta.alightings,
             )
         }
+
         return delta
     }
 
-    private fun updateAnchorHistory(track: TrackedPerson, anchorY: Float) {
+    private fun onLostTrack(track: TrackedPerson, frameIndex: Int, allowPreboardedExit: Boolean): CountDelta {
+        if (track.isBoarded && visitedDoorRecently(track, frameIndex)) {
+            return cancelBoarding(track, frameIndex)
+        }
+        if (track.isAlighted) return CountDelta(0, 0)
+        val canExitWithoutStableInside = allowPreboardedExit && track.wasInDoor
+        if (!wasStableInside(track) && !canExitWithoutStableInside) return CountDelta(0, 0)
+        if (track.framesSinceUpdate < lostAtDoorFrames) return CountDelta(0, 0)
+
+        val lastSeenOutside = track.lastSeenZone == DoorZoneSide.OUTSIDE
+        val lastSeenAtDoor = visitedDoorRecently(track, frameIndex)
+        if (!lastSeenOutside && !lastSeenAtDoor) return CountDelta(0, 0)
+
+        val moved = movedEnough(
+            track.stableAnchorX,
+            track.stableAnchorY,
+            track.detection.anchorX(countAnchorXRatio),
+            track.detection.anchorY(countAnchorYRatio),
+        )
+        val preboardedExitEvidence = wasStableInside(track) || moved || movedDuringLifetime(track) || headShrank(track) || wasVisibleAtDoorLongEnough(track)
+        if (!preboardedExitEvidence) return CountDelta(0, 0)
+        if (!lastSeenOutside && !moved && !headShrank(track) && !canExitWithoutStableInside) {
+            return CountDelta(0, 0)
+        }
+        return countAlighting(track, frameIndex, from = DoorZoneSide.INSIDE, to = DoorZoneSide.OUTSIDE)
+    }
+
+    private fun updateVisibleObservation(
+        track: TrackedPerson,
+        frameIndex: Int,
+        currentZone: DoorZoneSide,
+        inDoor: Boolean,
+        anchorX: Float,
+        anchorY: Float,
+    ) {
+        val headSize = hypot(track.detection.width, track.detection.height)
+        val clampedWindow = scaleWindow.coerceAtLeast(2)
+
+        if (track.firstSeenFrame == null) {
+            track.firstSeenFrame = frameIndex
+        }
+        track.lastSeenFrame = frameIndex
+        track.lastZone = currentZone
+        track.lastSeenZone = currentZone
+        track.wasInDoor = track.wasInDoor || inDoor
+        track.isInDoor = inDoor
+        if (inDoor) {
+            track.lastReliableInDoorFrame = frameIndex
+        }
+
         if (track.firstAnchorY == null) {
             track.firstAnchorY = anchorY
         }
+        if (track.firstAnchorX == null) {
+            track.firstAnchorX = anchorX
+        }
+        track.lastAnchorX = anchorX
         track.lastAnchorY = anchorY
+        track.minAnchorX = minOf(track.minAnchorX, anchorX)
+        track.maxAnchorX = maxOf(track.maxAnchorX, anchorX)
         track.minAnchorY = minOf(track.minAnchorY, anchorY)
         track.maxAnchorY = maxOf(track.maxAnchorY, anchorY)
-    }
+        track.firstBoxHeight = track.firstBoxHeight ?: track.detection.height
+        track.lastBoxHeight = track.detection.height
+        track.minBoxHeight = minOf(track.minBoxHeight, track.detection.height)
+        track.maxBoxHeight = maxOf(track.maxBoxHeight, track.detection.height)
 
-    private fun anchorMovement(track: TrackedPerson): Float {
-        return track.maxAnchorY - track.minAnchorY
-    }
+        track.headSizeHistory += headSize
+        while (track.headSizeHistory.size > clampedWindow) {
+            track.headSizeHistory.removeAt(0)
+        }
+        track.smoothedHeadSize = track.headSizeHistory.average().toFloat()
 
-    private fun movedTowardInside(track: TrackedPerson, zone: DoorCountingZone): Boolean {
-        val first = track.firstAnchorY ?: return false
-        val last = track.lastAnchorY ?: return false
-        val delta = last - first
-        return if (zone.insideOnTop) delta <= -minAnchorMovementPx else delta >= minAnchorMovementPx
-    }
-
-    private fun movedTowardOutside(track: TrackedPerson, zone: DoorCountingZone): Boolean {
-        val first = track.firstAnchorY ?: return false
-        val last = track.lastAnchorY ?: return false
-        val delta = last - first
-        return if (zone.insideOnTop) delta >= minAnchorMovementPx else delta <= -minAnchorMovementPx
-    }
-
-    private fun crossedCenterTowardInside(previousAnchorY: Float?, currentAnchorY: Float, zone: DoorCountingZone): Boolean {
-        val previous = previousAnchorY ?: return false
-        return if (zone.insideOnTop) {
-            previous >= zone.centerY && currentAnchorY < zone.centerY
-        } else {
-            previous <= zone.centerY && currentAnchorY > zone.centerY
+        if (track.stableAnchorX == null) {
+            track.stableAnchorX = anchorX
+            track.stableAnchorY = anchorY
         }
     }
 
-    private fun updateStableZone(track: TrackedPerson, currentZone: DoorZoneSide) {
-        if (track.lastZone == currentZone) {
-            track.stableZoneFrames++
-        } else {
-            track.lastZone = currentZone
+    private fun updateStableZone(
+        track: TrackedPerson,
+        currentZone: DoorZoneSide,
+        anchorX: Float,
+        anchorY: Float,
+    ): Boolean {
+        if (currentZone == DoorZoneSide.BUFFER) return false
+
+        val candidateChanged = track.transitionFrom != currentZone
+        if (candidateChanged) {
+            track.transitionFrom = currentZone
             track.stableZoneFrames = 1
+        } else {
+            track.stableZoneFrames++
         }
-        if (track.stableZoneFrames >= minStableFrames) {
-            track.stableZone = currentZone
+
+        if (track.stableZoneFrames < minStableFrames) return false
+        if (track.stableZone == currentZone) return false
+
+        val smoothedHeadSize = track.smoothedHeadSize
+        track.stableZone = currentZone
+        track.transitionFrom = currentZone
+        track.stableAnchorX = anchorX
+        track.stableAnchorY = anchorY
+        track.stableBoxHeight = track.detection.height
+        if (track.firstStableZone == null) {
+            track.firstStableZone = currentZone
+            track.firstStableHeadSize = smoothedHeadSize
+            track.bornInDoor = track.isInDoor || currentZone == DoorZoneSide.OUTSIDE
         }
+        track.lastStableHeadSize = smoothedHeadSize
+        return true
     }
 
-    private fun initialize(track: TrackedPerson, zone: DoorCountingZone, frameIndex: Int): CountDelta {
-        when (track.stableZone) {
-            DoorZoneSide.OUTSIDE -> {
-                track.firstStableZone = track.firstStableZone ?: DoorZoneSide.OUTSIDE
-                track.countState = TrackCountState.OUTSIDE
-                track.firstSideAbove = true
-            }
-            DoorZoneSide.INSIDE -> {
-                if (track.firstStableZone == null && movedTowardInside(track, zone)) {
-                    return countBoarding(track, frameIndex, "doorway/start -> inside")
-                }
-                track.firstStableZone = track.firstStableZone ?: DoorZoneSide.INSIDE
-                track.countState = TrackCountState.INSIDE
-                track.firstSideAbove = false
-            }
-            DoorZoneSide.DOORWAY -> Unit
-        }
-        track.sideHistory.add(track.stableZone == DoorZoneSide.OUTSIDE)
-        return CountDelta(0, 0)
-    }
-
-    private fun fromOutside(track: TrackedPerson, frameIndex: Int): CountDelta {
-        if (track.lastZone == DoorZoneSide.DOORWAY) {
-            track.countState = TrackCountState.IN_DOORWAY_FROM_OUTSIDE
-            track.transitionFrom = DoorZoneSide.OUTSIDE
-        } else if (track.lastZone == DoorZoneSide.INSIDE) {
-            return if (track.isAlighted) {
-                cancelAlighting(track, frameIndex)
-            } else {
-                countBoarding(track, frameIndex)
-            }
-        }
-        return CountDelta(0, 0)
-    }
-
-    private fun fromInside(track: TrackedPerson, zone: DoorCountingZone, frameIndex: Int): CountDelta {
-        if (track.lastZone == DoorZoneSide.DOORWAY) {
-            track.countState = TrackCountState.IN_DOORWAY_FROM_INSIDE
-            track.transitionFrom = DoorZoneSide.INSIDE
-        } else if (track.lastZone == DoorZoneSide.OUTSIDE) {
-            return if (track.isBoarded) {
-                cancelBoarding(track, frameIndex)
-            } else if (movedTowardOutside(track, zone)) {
-                countAlighting(track, frameIndex)
-            } else {
-                CountDelta(0, 0)
-            }
-        }
-        return CountDelta(0, 0)
-    }
-
-    private fun confirmFromOutside(track: TrackedPerson, frameIndex: Int): CountDelta {
-        return when (track.lastZone) {
-            DoorZoneSide.INSIDE -> {
-                if (track.isAlighted) cancelAlighting(track, frameIndex) else countBoarding(track, frameIndex)
-            }
-            DoorZoneSide.OUTSIDE -> {
-                track.countState = TrackCountState.OUTSIDE
-                track.transitionFrom = null
-                CountDelta(0, 0)
-            }
-            DoorZoneSide.DOORWAY -> CountDelta(0, 0)
-        }
-    }
-
-    private fun confirmFromInside(track: TrackedPerson, zone: DoorCountingZone, frameIndex: Int): CountDelta {
-        return when (track.lastZone) {
-            DoorZoneSide.OUTSIDE -> {
-                if (track.isBoarded) {
-                    cancelBoarding(track, frameIndex)
-                } else if (movedTowardOutside(track, zone)) {
-                    countAlighting(track, frameIndex)
-                } else {
-                    track.countState = TrackCountState.OUTSIDE
-                    track.transitionFrom = null
-                    CountDelta(0, 0)
-                }
-            }
-            DoorZoneSide.INSIDE -> {
-                track.countState = TrackCountState.INSIDE
-                track.transitionFrom = null
-                CountDelta(0, 0)
-            }
-            DoorZoneSide.DOORWAY -> CountDelta(0, 0)
-        }
-    }
-
-    private fun handleBoarded(track: TrackedPerson, frameIndex: Int): CountDelta {
-        if (track.lastZone == DoorZoneSide.DOORWAY) {
-            track.countState = TrackCountState.IN_DOORWAY_FROM_INSIDE
-            track.transitionFrom = DoorZoneSide.INSIDE
-        }
-        if (track.lastZone == DoorZoneSide.OUTSIDE && track.isBoarded) {
-            return cancelBoarding(track, frameIndex)
-        }
-        return CountDelta(0, 0)
-    }
-
-    private fun handleAlighted(track: TrackedPerson, frameIndex: Int): CountDelta {
-        if (track.lastZone == DoorZoneSide.DOORWAY) {
-            track.countState = TrackCountState.IN_DOORWAY_FROM_OUTSIDE
-            track.transitionFrom = DoorZoneSide.OUTSIDE
-        }
-        if (track.lastZone == DoorZoneSide.INSIDE && track.isAlighted) {
+    private fun onStableInside(
+        track: TrackedPerson,
+        frameIndex: Int,
+        previousStableZone: DoorZoneSide,
+        previousStableAnchorX: Float?,
+        previousStableAnchorY: Float?,
+        previousStableHeadSize: Float?,
+    ): CountDelta {
+        if (track.isAlighted) {
             return cancelAlighting(track, frameIndex)
         }
-        return CountDelta(0, 0)
+
+        val originOutside = track.firstStableZone == DoorZoneSide.OUTSIDE || track.bornInDoor
+        if (!originOutside) {
+            track.countState = TrackCountState.INSIDE
+            return CountDelta(0, 0)
+        }
+
+        if (previousStableZone != DoorZoneSide.OUTSIDE && !track.bornInDoor) {
+            track.countState = TrackCountState.INSIDE
+            return CountDelta(0, 0)
+        }
+
+        if (!track.bornInDoor && !movedEnough(previousStableAnchorX, previousStableAnchorY, track.detection.anchorX(countAnchorXRatio), track.detection.anchorY(countAnchorYRatio))) {
+            track.countState = TrackCountState.INSIDE
+            return CountDelta(0, 0)
+        }
+        if (!track.bornInDoor && !headGrew(track, previousStableHeadSize)) {
+            track.countState = TrackCountState.INSIDE
+            return CountDelta(0, 0)
+        }
+
+        track.firstStableZone = DoorZoneSide.INSIDE
+        track.firstStableHeadSize = track.smoothedHeadSize
+        return countBoarding(track, frameIndex)
     }
+
+    private fun onStableOutside(
+        track: TrackedPerson,
+        frameIndex: Int,
+        previousStableZone: DoorZoneSide,
+        previousStableAnchorX: Float?,
+        previousStableAnchorY: Float?,
+        previousStableHeadSize: Float?,
+        allowPreboardedExit: Boolean,
+    ): CountDelta {
+        if (track.isBoarded) {
+            return cancelBoarding(track, frameIndex)
+        }
+
+        val canExitWithoutStableInside = allowPreboardedExit && track.wasInDoor
+        val wasInside = wasStableInside(track)
+        if (!wasStableInside(track) && !canExitWithoutStableInside) {
+            track.countState = TrackCountState.OUTSIDE
+            return CountDelta(0, 0)
+        }
+        if (previousStableZone != DoorZoneSide.INSIDE && !visitedDoorRecently(track, frameIndex) && !canExitWithoutStableInside) {
+            track.countState = TrackCountState.OUTSIDE
+            return CountDelta(0, 0)
+        }
+        if (!visitedDoorRecently(track, frameIndex)) {
+            track.countState = TrackCountState.OUTSIDE
+            return CountDelta(0, 0)
+        }
+        val moved = movedEnough(
+            previousStableAnchorX,
+            previousStableAnchorY,
+            track.detection.anchorX(countAnchorXRatio),
+            track.detection.anchorY(countAnchorYRatio),
+        )
+        if (!moved && !canExitWithoutStableInside) {
+            track.countState = TrackCountState.OUTSIDE
+            return CountDelta(0, 0)
+        }
+        val shrank = headShrank(track, previousStableHeadSize)
+        if (!wasInside && canExitWithoutStableInside && !moved && !movedDuringLifetime(track) && !shrank) {
+            track.countState = TrackCountState.OUTSIDE
+            return CountDelta(0, 0)
+        }
+        if (!visitedDoorRecently(track, frameIndex) && !shrank) {
+            track.countState = TrackCountState.OUTSIDE
+            return CountDelta(0, 0)
+        }
+
+        track.firstStableZone = DoorZoneSide.OUTSIDE
+        track.firstStableHeadSize = track.smoothedHeadSize
+        return countAlighting(track, frameIndex, from = DoorZoneSide.INSIDE, to = DoorZoneSide.OUTSIDE)
+    }
+
+    private fun wasStableInside(track: TrackedPerson): Boolean =
+        track.firstStableZone == DoorZoneSide.INSIDE || track.stableZone == DoorZoneSide.INSIDE || track.countState == TrackCountState.INSIDE
+
+    private fun visitedDoorRecently(track: TrackedPerson, frameIndex: Int): Boolean {
+        val seenAt = track.lastReliableInDoorFrame ?: return false
+        return frameIndex - seenAt <= lostAtDoorFrames + 2
+    }
+
+    private fun movedEnough(startX: Float?, startY: Float?, anchorX: Float, anchorY: Float): Boolean =
+        stableAnchorMovement(startX, startY, anchorX, anchorY) >= minAnchorMovementPx
+
+    private fun movedDuringLifetime(track: TrackedPerson): Boolean {
+        val dx = track.maxAnchorX - track.minAnchorX
+        val dy = track.maxAnchorY - track.minAnchorY
+        return hypot(dx, dy) >= minAnchorMovementPx
+    }
+
+    private fun wasVisibleAtDoorLongEnough(track: TrackedPerson): Boolean {
+        val firstSeen = track.firstSeenFrame ?: return false
+        val lastSeen = track.lastSeenFrame ?: return false
+        return track.wasInDoor && lastSeen - firstSeen >= minDoorExitVisibleFrames.coerceAtLeast(1)
+    }
+
+    private fun stableAnchorMovement(startX: Float?, startY: Float?, anchorX: Float, anchorY: Float): Float {
+        if (startX == null || startY == null) return 0f
+        return hypot(anchorX - startX, anchorY - startY)
+    }
+
+    private fun headRatio(track: TrackedPerson, baseline: Float? = null): Float {
+        val current = track.smoothedHeadSize ?: return 1f
+        val base = baseline ?: track.firstStableHeadSize ?: track.lastStableHeadSize ?: current
+        if (base <= 1e-6f) return 1f
+        return current / base
+    }
+
+    private fun headGrew(track: TrackedPerson, baseline: Float? = null): Boolean =
+        headRatio(track, baseline) >= headScaleGrowRatio
+
+    private fun headShrank(track: TrackedPerson, baseline: Float? = null): Boolean =
+        headRatio(track, baseline) <= headScaleShrinkRatio
 
     private fun cancelBoarding(track: TrackedPerson, frameIndex: Int): CountDelta {
         track.isBoarded = false
         track.countedDirection = null
         track.countState = TrackCountState.OUTSIDE
-        track.transitionFrom = null
-        log.debug("Track {} cancelled boarding after returning outside", track.id)
+        log.debug("Track {} cancelled boarding after returning toward street/door", track.id)
         return CountDelta(
             boardings = -1,
             alightings = 0,
-            event = PassengerCountEvent(track.id, CountedDirection.CANCEL_BOARDING, frameIndex, DoorZoneSide.INSIDE, DoorZoneSide.OUTSIDE)
+            event = PassengerCountEvent(track.id, CountedDirection.CANCEL_BOARDING, frameIndex, DoorZoneSide.INSIDE, DoorZoneSide.OUTSIDE),
         )
     }
 
@@ -316,48 +373,48 @@ class CrossingLineCounter(
         track.isAlighted = false
         track.countedDirection = null
         track.countState = TrackCountState.INSIDE
-        track.transitionFrom = null
-        log.debug("Track {} cancelled alighting after returning inside", track.id)
+        log.debug("Track {} cancelled alighting after returning into salon", track.id)
         return CountDelta(
             boardings = 0,
             alightings = -1,
-            event = PassengerCountEvent(track.id, CountedDirection.CANCEL_ALIGHTING, frameIndex, DoorZoneSide.OUTSIDE, DoorZoneSide.INSIDE)
+            event = PassengerCountEvent(track.id, CountedDirection.CANCEL_ALIGHTING, frameIndex, DoorZoneSide.OUTSIDE, DoorZoneSide.INSIDE),
         )
     }
 
-    private fun countBoarding(track: TrackedPerson, frameIndex: Int, reason: String = "outside -> doorway -> inside"): CountDelta {
+    private fun countBoarding(track: TrackedPerson, frameIndex: Int): CountDelta {
         if (track.isBoarded) return CountDelta(0, 0)
-
         track.isBoarded = true
         track.isAlighted = false
         track.countedDirection = CountedDirection.BOARDING
         track.lastCountFrame = frameIndex
         track.crossingCount++
         track.countState = TrackCountState.BOARDED
-        track.transitionFrom = null
-        log.debug("Track {} BOARDED ({})", track.id, reason)
+        log.debug("Track {} BOARDED", track.id)
         return CountDelta(
             boardings = 1,
             alightings = 0,
-            event = PassengerCountEvent(track.id, CountedDirection.BOARDING, frameIndex, DoorZoneSide.OUTSIDE, DoorZoneSide.INSIDE)
+            event = PassengerCountEvent(track.id, CountedDirection.BOARDING, frameIndex, DoorZoneSide.OUTSIDE, DoorZoneSide.INSIDE),
         )
     }
 
-    private fun countAlighting(track: TrackedPerson, frameIndex: Int): CountDelta {
+    private fun countAlighting(
+        track: TrackedPerson,
+        frameIndex: Int,
+        from: DoorZoneSide,
+        to: DoorZoneSide,
+    ): CountDelta {
         if (track.isAlighted) return CountDelta(0, 0)
-
         track.isAlighted = true
         track.isBoarded = false
         track.countedDirection = CountedDirection.ALIGHTING
         track.lastCountFrame = frameIndex
         track.crossingCount++
         track.countState = TrackCountState.ALIGHTED
-        track.transitionFrom = null
-        log.debug("Track {} ALIGHTED (inside -> doorway -> outside)", track.id)
+        log.debug("Track {} ALIGHTED", track.id)
         return CountDelta(
             boardings = 0,
             alightings = 1,
-            event = PassengerCountEvent(track.id, CountedDirection.ALIGHTING, frameIndex, DoorZoneSide.INSIDE, DoorZoneSide.OUTSIDE)
+            event = PassengerCountEvent(track.id, CountedDirection.ALIGHTING, frameIndex, from, to),
         )
     }
 }

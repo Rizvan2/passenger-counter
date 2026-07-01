@@ -29,7 +29,7 @@ class UploadedVideoCleanupService(
         val source = Paths.get(sessionPath).toAbsolutePath().normalize()
         val home = Paths.get(properties.home).toAbsolutePath().normalize()
 
-        // Трогаем только файлы из CarCam-структуры (лежат в videos/, но не в processed/)
+        // Трогаем только файлы которые пришли через FTP (лежат в incoming)
         if (!source.startsWith(home) || !Files.exists(source)) return
 
         if (properties.keepAfterAnalysis) {

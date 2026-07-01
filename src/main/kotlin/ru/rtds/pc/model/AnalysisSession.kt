@@ -6,15 +6,22 @@ class AnalysisSession(
     val id: String,
     val sourcePath: String,
     val videoMetadata: VideoMetadata = VideoMetadata.fromPath(sourcePath),
-    val lineYRatio: Float,
-    val insideOnTop: Boolean = true,
+    val salonPolygon: List<NormalizedPoint>,
+    val streetPolygon: List<NormalizedPoint>,
+    val doorPolygon: List<NormalizedPoint>,
+    val lineAxRatio: Float = 0f,
+    val lineAyRatio: Float = 0.5f,
+    val lineBxRatio: Float = 1f,
+    val lineByRatio: Float = 0.5f,
+    val insideOnPositiveSide: Boolean = false,
     val autoInitialOnboard: Boolean = true,
     initialOnboard: Int = 0,
-    // Источник видео — используется при сохранении результата в БД
     val source: VideoSource = VideoSource.MANUAL,
-    // SHA-256 файла — для персистентного дедупа FTP-роликов после рестарта
     val sourceHash: String? = null,
 ) {
+    val lineYRatio: Float get() = (lineAyRatio + lineByRatio) / 2f
+    val insideOnTop: Boolean get() = !insideOnPositiveSide
+
     @Volatile var stopRequested: Boolean = false
     @Volatile var status: SessionStatus = SessionStatus.RUNNING
     @Volatile var errorMessage: String? = null
@@ -27,6 +34,7 @@ class AnalysisSession(
     @Volatile var initialOnboardCandidate: Int = initialOnboard
     @Volatile var visibleDetections: Int = 0
     @Volatile var insideDetections: Int = 0
+    @Volatile var bufferDetections: Int = 0
     @Volatile var doorwayDetections: Int = 0
     @Volatile var outsideDetections: Int = 0
     @Volatile var framesProcessed: Int = 0

@@ -1,13 +1,13 @@
 package ru.rtds.pc.ftp.service
 
-import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
+import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
 import ru.rtds.pc.ftp.config.FtpProperties
-import ru.rtds.pc.model.VideoMetadata
 import ru.rtds.pc.model.VideoSource
 import ru.rtds.pc.persistence.analysis.AnalysisResultPersistenceService
 import ru.rtds.pc.service.AnalysisService
+import ru.rtds.pc.service.CountingZones
 import ru.rtds.pc.service.SessionManager
 import java.nio.file.Files
 import java.nio.file.Path
@@ -23,84 +23,83 @@ class ReceivedVideoDispatcher(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // Уже обработанные или поставленные в очередь в этом процессе.
-    private val processedHashes = ConcurrentHashMap.newKeySet<String>()
-    // Файлы, для которых анализ сейчас выполняется.
-    private val activePaths = ConcurrentHashMap.newKeySet<String>()
+    // In-memory дедуп — быстрая проверка без обращения к БД.
+    // Персистентный дедуп через БД (existsByHash) страхует после рестарта.
+    private val seenFingerprints = ConcurrentHashMap.newKeySet<String>()
 
-    @PostConstruct
-    fun warmProcessedCache() {
-        val known = persistenceService.loadFinishedSourceHashes()
-        if (known.isNotEmpty()) {
-            processedHashes.addAll(known)
-            log.info("Loaded {} finished analysis hashes into dedup cache", known.size)
-        }
-    }
-
+    @Async("analysisExecutor")
     fun onVideoReceived(videoFile: Path) {
-        if (!Files.isRegularFile(videoFile)) return
+        val fingerprint = sha256(videoFile)
 
-        val absolute = videoFile.toAbsolutePath().normalize()
-        val pathKey = absolute.toString()
-
-        if (activePaths.contains(pathKey)) {
-            log.debug("Skip in-flight video: {}", absolute.fileName)
+        // 1. Быстрая проверка in-memory
+        if (!seenFingerprints.add(fingerprint)) {
+            log.info("Duplicate FTP upload ignored (in-memory): {} ({})", videoFile.fileName, fingerprint)
             return
         }
 
-        val metadata = VideoMetadata.fromPath(pathKey)
-        val fingerprint = sha256(absolute)
-
-        if (processedHashes.contains(fingerprint)) {
-            log.debug("Skip already queued/processed video: {}", absolute.fileName)
-            return
-        }
-
-        if (persistenceService.isAlreadyAnalyzed(fingerprint, metadata)) {
-            processedHashes.add(fingerprint)
-            log.info("Skip already analyzed video: {} ({})", absolute.fileName, fingerprint.take(12))
-            return
-        }
-
-        if (!processedHashes.add(fingerprint)) return
-        if (!activePaths.add(pathKey)) {
-            processedHashes.remove(fingerprint)
+        // 2. Персистентная проверка через БД (работает после рестарта)
+        if (persistenceService.existsByHash(fingerprint)) {
+            log.info("Duplicate FTP upload ignored (db): {} ({})", videoFile.fileName, fingerprint)
             return
         }
 
         log.info(
-            "Video received for analysis: {} ({} bytes), lineYRatio={}, insideOnTop={}, keepAfterAnalysis={}",
-            absolute.fileName,
-            runCatching { Files.size(absolute) }.getOrDefault(-1L),
-            properties.analysis.lineYRatio,
-            properties.analysis.insideOnTop,
+            "FTP video received: {} ({} bytes), line=({},{})->({},{}), insidePositive={}, keepAfterAnalysis={}",
+            videoFile.fileName,
+            runCatching { Files.size(videoFile) }.getOrDefault(-1L),
+            properties.analysis.resolvedLineAx(),
+            properties.analysis.resolvedLineAy(),
+            properties.analysis.resolvedLineBx(),
+            properties.analysis.resolvedLineBy(),
+            properties.analysis.resolvedInsideOnPositiveSide(),
             properties.keepAfterAnalysis,
         )
 
-        try {
-            val session = sessionManager.create(
-                videoPath = pathKey,
-                lineYRatio = properties.analysis.lineYRatio,
-                insideOnTop = properties.analysis.insideOnTop,
-                autoInitialOnboard = properties.analysis.autoInitialOnboard,
-                initialOnboard = properties.analysis.initialOnboard,
-                source = VideoSource.FTP,
-                sourceHash = fingerprint,
+        val legacyLineAx = properties.analysis.resolvedLineAx()
+        val legacyLineAy = properties.analysis.resolvedLineAy()
+        val legacyLineBx = properties.analysis.resolvedLineBx()
+        val legacyLineBy = properties.analysis.resolvedLineBy()
+        val insidePositive = properties.analysis.resolvedInsideOnPositiveSide()
+        val legacyPolygons = CountingZones.legacyPolygonsFromLine(
+            lineAxRatio = legacyLineAx,
+            lineAyRatio = legacyLineAy,
+            lineBxRatio = legacyLineBx,
+            lineByRatio = legacyLineBy,
+            insideOnPositiveSide = insidePositive,
+        )
+        val (salonPolygon, streetPolygon, fallbackDoorPolygon) = if (properties.analysis.hasExplicitPolygons()) {
+            Triple(
+                properties.analysis.resolvedSalonPolygon(),
+                properties.analysis.resolvedStreetPolygon(),
+                legacyPolygons.third,
             )
-            analysisService.startAsync(session)
-            log.info("Analysis queued: {} → session {}", absolute.fileName, session.id)
-        } catch (e: Exception) {
-            activePaths.remove(pathKey)
-            processedHashes.remove(fingerprint)
-            log.error("Failed to queue analysis for {}: {}", absolute.fileName, e.message, e)
+        } else {
+            legacyPolygons
         }
-    }
+        val doorPolygon = if (properties.analysis.hasExplicitDoorPolygon()) {
+            properties.analysis.resolvedDoorPolygon()
+        } else {
+            fallbackDoorPolygon
+        }
 
-    fun onAnalysisFinished(sourcePath: String, sourceHash: String?) {
-        val pathKey = runCatching { Path.of(sourcePath).toAbsolutePath().normalize().toString() }
-            .getOrDefault(sourcePath)
-        activePaths.remove(pathKey)
-        sourceHash?.let { processedHashes.add(it) }
+        val session = sessionManager.create(
+            videoPath          = videoFile.toAbsolutePath().toString(),
+            salonPolygon       = salonPolygon,
+            streetPolygon      = streetPolygon,
+            doorPolygon        = doorPolygon,
+            lineAxRatio        = legacyLineAx,
+            lineAyRatio        = legacyLineAy,
+            lineBxRatio        = legacyLineBx,
+            lineByRatio        = legacyLineBy,
+            insideOnPositiveSide = insidePositive,
+            autoInitialOnboard = properties.analysis.autoInitialOnboard,
+            initialOnboard     = properties.analysis.initialOnboard,
+            source             = VideoSource.FTP,
+            sourceHash         = fingerprint,
+        )
+
+        analysisService.startAsync(session)
+        log.info("Analysis queued for FTP upload: {} → session {}", videoFile.fileName, session.id)
     }
 
     private fun sha256(file: Path): String {

@@ -24,27 +24,6 @@ class VideoMetadataTest {
     }
 
     @Test
-    fun `extracts carcam metadata from ftp-style path`() {
-        val metadata = VideoMetadata.fromPath(
-            "088037000054/2026-06-18/0000_00140000_5_1781809365_1781809376_2_5111263.avi",
-        )
-
-        assertEquals("088037000054", metadata.videoDeviceId)
-        assertEquals(
-            "088037000054/2026-06-18/0000_00140000_5_1781809365_1781809376_2_5111263.avi",
-            metadata.originalRelativePath,
-        )
-        assertEquals(LocalDate.parse("2026-06-18"), metadata.recordDate)
-        assertEquals(0, metadata.channel)
-        assertEquals("00140000", metadata.eventCode)
-        assertEquals(5, metadata.recordType)
-        assertEquals(Instant.ofEpochSecond(1781809365), metadata.clipStartedAt)
-        assertEquals(Instant.ofEpochSecond(1781809376), metadata.clipFinishedAt)
-        assertEquals(2, metadata.fileFlag)
-        assertEquals(5111263L, metadata.fileUid)
-    }
-
-    @Test
     fun `keeps video device empty when path does not contain ftp folder structure`() {
         val metadata = VideoMetadata.fromPath("C:/videos/manual-upload.mp4")
 

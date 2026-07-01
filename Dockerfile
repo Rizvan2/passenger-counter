@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /app/build/libs/*.jar app.jar
 
-RUN mkdir -p /app/models /app/videos/processed/finished /app/videos/processed/failed
+RUN mkdir -p /app/models /app/videos /app/ftp/incoming /app/ftp/processed
 
 EXPOSE 8081 2022 30000-30010
 

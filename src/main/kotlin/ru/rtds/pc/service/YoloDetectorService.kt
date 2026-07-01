@@ -14,10 +14,12 @@ import java.nio.FloatBuffer
 @Service
 class YoloDetectorService(
     private val modelDownloadService: ModelDownloadService,
+    @Value("\${pc.detector:person}") private val detectorMode: String,
+    @Value("\${pc.onnx-provider:cpu}") private val onnxProvider: String,
     @Value("\${pc.yolo-input-size}") private val configuredInputSize: Int,
     @Value("\${pc.confidence-threshold}") private val confThreshold: Float,
     @Value("\${pc.nms-iou-threshold}") private val nmsIouThreshold: Float,
-) {
+) : FrameDetector {
     private val log = LoggerFactory.getLogger(javaClass)
 
     private lateinit var env: OrtEnvironment
@@ -28,15 +30,20 @@ class YoloDetectorService(
     private val numClasses = 80
     private var numBoxes: Int = 0
     private var effectiveInputSize: Int = configuredInputSize
-    val inputSize: Int get() = effectiveInputSize
+    private var enabled = false
+    override val id: String = "person"
+    override val inputSize: Int get() = effectiveInputSize
 
     @PostConstruct
     fun init() {
+        if (!detectorMode.equals(id, ignoreCase = true)) {
+            log.info("Person detector is not selected (pc.detector={}), skipping YOLO model load", detectorMode)
+            return
+        }
         val modelPath = modelDownloadService.yoloPath.toAbsolutePath().toString()
         log.info("Loading YOLO model from: {}", modelPath)
         env = OrtEnvironment.getEnvironment()
-        val options = OrtSession.SessionOptions()
-        options.setIntraOpNumThreads(4)
+        val options = OrtSessionOptionsFactory.create(onnxProvider, intraOpThreads = 4)
         session = env.createSession(modelPath, options)
         inputName = session.inputNames.first()
 
@@ -65,6 +72,7 @@ class YoloDetectorService(
             log.error("=".repeat(70))
             throw IllegalStateException("Unsupported YOLO model format: $outStr")
         }
+        enabled = true
     }
 
     private fun resolveInputSize(inputInfo: String): Int {
@@ -97,7 +105,8 @@ class YoloDetectorService(
      * Принимает уже подготовленный (letterboxed, CHW, нормализованный) FloatArray размера 3*inputSize*inputSize.
      * Возвращает детекции в координатах ОРИГИНАЛЬНОГО кадра.
      */
-    fun detect(letterboxed: FloatArray, origWidth: Int, origHeight: Int): List<Detection> {
+    override fun detect(letterboxed: FloatArray, origWidth: Int, origHeight: Int): List<Detection> {
+        if (!enabled) return emptyList()
         val shape = longArrayOf(1, 3, inputSize.toLong(), inputSize.toLong())
         val buf = FloatBuffer.wrap(letterboxed)
         OnnxTensor.createTensor(env, buf, shape).use { tensor ->

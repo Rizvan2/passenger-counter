@@ -24,40 +24,6 @@ class VideoFrameReader(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    data class VideoProbe(
-        val width: Int,
-        val height: Int,
-        val frameRate: Double,
-        val lengthInFrames: Long,
-        val durationMs: Long,
-    )
-
-    fun probe(sourcePath: String): VideoProbe? {
-        val grabber = FFmpegFrameGrabber(sourcePath)
-        try {
-            grabber.start()
-            val durationMs = when {
-                grabber.lengthInTime > 0 -> grabber.lengthInTime / 1000
-                grabber.frameRate > 0 && grabber.lengthInFrames > 0 ->
-                    (grabber.lengthInFrames / grabber.frameRate * 1000).toLong()
-                else -> 0L
-            }
-            return VideoProbe(
-                width = grabber.imageWidth,
-                height = grabber.imageHeight,
-                frameRate = grabber.frameRate,
-                lengthInFrames = grabber.lengthInFrames.toLong().coerceAtLeast(0),
-                durationMs = durationMs.coerceAtLeast(0),
-            )
-        } catch (e: Exception) {
-            log.warn("Video probe failed for {}: {}", sourcePath, e.message)
-            return null
-        } finally {
-            runCatching { grabber.stop() }
-            runCatching { grabber.release() }
-        }
-    }
-
     fun process(
         sourcePath: String,
         skipFrames: Int = 2,

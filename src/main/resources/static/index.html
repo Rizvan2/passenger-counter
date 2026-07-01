@@ -6,22 +6,32 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/style.css?v=20260629-1">
   <style>
-    /* ─── Tabs ─────────────────────────────────────────── */
     .tabs {
-      display: flex; gap: 4px; padding: 0 22px;
-      background: #181b21; border-bottom: 1px solid #292e38;
+      display: flex;
+      gap: 4px;
+      padding: 0 22px;
+      background: #181b21;
+      border-bottom: 1px solid #292e38;
     }
     .tab {
-      padding: 0 18px; height: 42px; display: flex; align-items: center;
-      font-size: 13px; font-weight: 700; cursor: pointer; color: #7b8492;
-      border-bottom: 2px solid transparent; background: none; border-radius: 0;
-      min-height: unset; border-top: 0; border-left: 0; border-right: 0;
+      padding: 0 18px;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #7b8492;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: none;
+      border-radius: 0;
+      min-height: unset;
       transition: color .15s;
     }
-    .tab:hover:not(:disabled) { color: #c4cad6; background: none; }
+    .tab:hover:not(:disabled) { color: #c4cad6; }
     .tab.active { color: #f6c85f; border-bottom-color: #f6c85f; }
 
-    /* ─── Setup panel ───────────────────────────────────── */
     .setup-panel {
       display: grid;
       grid-template-columns: 320px 1fr;
@@ -31,110 +41,160 @@
       margin: 0 auto;
       align-items: start;
     }
-    @media (max-width: 860px) { .setup-panel { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) {
+      .setup-panel { grid-template-columns: 1fr; }
+    }
 
     .sp-card {
-      background: #181b21; border: 1px solid #292e38;
-      border-radius: 8px; padding: 16px;
+      background: #181b21;
+      border: 1px solid #292e38;
+      border-radius: 8px;
+      padding: 16px;
     }
     .sp-card + .sp-card { margin-top: 14px; }
     .sp-title {
-      font-size: 11px; font-weight: 800; text-transform: uppercase;
-      letter-spacing: .7px; color: #6b7585; margin-bottom: 12px;
-      display: flex; align-items: center; gap: 8px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .7px;
+      color: #6b7585;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-    .sp-title .badge-drag {
-      font-size: 10px; background: rgba(246,200,95,.12); color: #f6c85f;
-      border-radius: 4px; padding: 1px 6px; letter-spacing: .4px;
+    .badge-drag {
+      font-size: 10px;
+      background: rgba(246,200,95,.12);
+      color: #f6c85f;
+      border-radius: 4px;
+      padding: 1px 6px;
+      letter-spacing: .4px;
     }
 
-    /* Video list */
     .vlist-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
     .vlist-search {
-      flex: 1; background: #111317; border: 1px solid #333946;
-      border-radius: 6px; color: #f4f6f8; font: inherit;
-      font-size: 13px; padding: 7px 10px; min-height: unset;
+      flex: 1;
+      background: #111317;
+      border: 1px solid #333946;
+      border-radius: 6px;
+      color: #f4f6f8;
+      font: inherit;
+      font-size: 13px;
+      padding: 7px 10px;
+      min-height: unset;
     }
     .vlist-search:focus { outline: none; border-color: #5d8cff; }
     .vlist-refresh {
-      background: #111317; border: 1px solid #333946; border-radius: 6px;
-      color: #7b8492; font-size: 18px; width: 36px; min-height: 36px;
-      cursor: pointer; font-weight: 400;
+      background: #111317;
+      border: 1px solid #333946;
+      border-radius: 6px;
+      color: #7b8492;
+      font-size: 18px;
+      width: 36px;
+      min-height: 36px;
+      cursor: pointer;
+      font-weight: 400;
     }
-    .vlist-refresh:hover:not(:disabled) { background: #111317; color: #e8eaee; border-color: #5d8cff; }
+    .vlist-refresh:hover:not(:disabled) { color: #e8eaee; border-color: #5d8cff; }
     .vlist-box { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
     .vlist-empty { color: #5b6672; font-size: 13px; padding: 10px 0; text-align: center; }
     .vitem {
-      display: flex; align-items: center; gap: 9px; padding: 8px 9px;
-      border-radius: 6px; cursor: pointer; border: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 9px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
       transition: background .1s;
     }
     .vitem:hover { background: #1e222a; }
     .vitem.sel { background: rgba(79,125,243,.1); border-color: #4f7df3; }
     .vitem-icon { font-size: 16px; flex-shrink: 0; }
     .vitem-name {
-      font-size: 13px; font-weight: 600; color: #e8eaee;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-size: 13px;
+      font-weight: 600;
+      color: #e8eaee;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .vitem.sel .vitem-name { color: #79a7ff; }
     .vitem-meta { font-size: 11px; color: #5b6672; margin-top: 1px; }
     .manual-row { border-top: 1px solid #292e38; padding-top: 12px; margin-top: 10px; }
 
-    /* Preview */
     .preview-wrap {
-      position: relative; width: 100%; aspect-ratio: 16/9;
-      background: #050608; border-radius: 6px; overflow: hidden;
-      cursor: ns-resize; border: 1px solid #292e38; margin-bottom: 14px;
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #050608;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid #292e38;
+      margin-bottom: 14px;
+      cursor: crosshair;
     }
     .preview-wrap canvas { display: block; width: 100%; height: 100%; }
-    .preview-ph {
-      position: absolute; inset: 0; display: flex; align-items: center;
-      justify-content: center; text-align: center;
-      color: #5b6672; font-size: 13px; line-height: 1.6; pointer-events: none;
-    }
+    .preview-ph,
     .preview-spin {
-      position: absolute; inset: 0; display: flex; align-items: center;
-      justify-content: center; background: rgba(5,6,8,.8);
-      color: #7b8492; font-size: 13px;
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 13px;
+      pointer-events: none;
     }
+    .preview-ph { color: #5b6672; line-height: 1.6; }
+    .preview-spin { background: rgba(5,6,8,.8); color: #7b8492; }
 
-    /* Params */
     .params-grid { display: flex; flex-direction: column; gap: 12px; }
-    .chk-row { display: flex; align-items: center; gap: 8px; }
+    .chk-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .chk-row input { width: 15px; height: 15px; margin: 0; accent-color: #426ee8; }
     .chk-label { font-size: 13px; color: #e8eaee; }
 
-    /* Advanced */
     .adv { border-top: 1px solid #292e38; padding-top: 12px; margin-top: 4px; }
     .adv summary {
-      font-size: 12px; color: #5b6672; cursor: pointer;
-      user-select: none; list-style: none;
+      font-size: 12px;
+      color: #5b6672;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
     }
     .adv summary::-webkit-details-marker { display: none; }
     .adv[open] summary { color: #7b8492; margin-bottom: 10px; }
     .yml-row {
-      display: flex; justify-content: space-between;
-      font-size: 12px; color: #5b6672; padding: 3px 0;
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #5b6672;
+      padding: 3px 0;
     }
     .yml-row b { color: #9aa3b2; font-family: ui-monospace, monospace; font-size: 11px; }
     .yml-hint { font-size: 11px; color: #3d4855; margin-top: 8px; }
 
-    /* Summary + launch */
     .summary { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
     .sum-row { display: flex; justify-content: space-between; font-size: 13px; }
     .sum-row span { color: #6b7585; }
     .sum-row b { color: #e8eaee; text-align: right; max-width: 65%; word-break: break-all; }
     .launch-btn {
-      width: 100%; padding: 12px; font-size: 15px;
-      font-weight: 800; border-radius: 8px;
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 800;
+      border-radius: 8px;
     }
     .launch-err {
-      margin-top: 10px; font-size: 12px; color: #ff8b8b;
-      background: rgba(255,139,139,.07); border: 1px solid rgba(255,139,139,.18);
-      border-radius: 6px; padding: 8px 10px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: #ff8b8b;
+      background: rgba(255,139,139,.07);
+      border: 1px solid rgba(255,139,139,.18);
+      border-radius: 6px;
+      padding: 8px 10px;
     }
-
-    /* num input override */
     input.num-in { width: 80px; min-height: 36px; padding: 5px 8px; }
   </style>
 </head>
@@ -151,25 +211,21 @@
   </div>
 </header>
 
-<!-- Вкладки -->
 <nav class="tabs">
-  <button class="tab active" id="tabSetup">⚙ Настройка</button>
-  <button class="tab" id="tabMonitor">▶ Мониторинг</button>
+  <button class="tab active" id="tabSetup">Настройка</button>
+  <button class="tab" id="tabMonitor">Мониторинг</button>
 </nav>
 
-<!-- ══════════════ ВКЛАДКА: НАСТРОЙКА ══════════════ -->
 <div id="viewSetup" class="setup-panel">
-
-  <!-- Левая колонка: выбор видео -->
   <div>
     <div class="sp-card">
       <div class="sp-title">Видеофайл</div>
       <div class="vlist-toolbar">
-        <input id="searchInput" class="vlist-search" type="text" placeholder="Поиск по имени…">
+        <input id="searchInput" class="vlist-search" type="text" placeholder="Поиск по имени...">
         <button class="vlist-refresh" id="refreshBtn" title="Обновить">↺</button>
       </div>
       <div id="videoList" class="vlist-box">
-        <div class="vlist-empty">Загрузка…</div>
+        <div class="vlist-empty">Загрузка...</div>
       </div>
       <div class="manual-row">
         <label class="field field-wide">
@@ -180,35 +236,46 @@
     </div>
   </div>
 
-  <!-- Правая колонка: превью + параметры + запуск -->
   <div>
-    <!-- Превью с линией -->
     <div class="sp-card">
       <div class="sp-title">
-        Линия подсчёта
+        Зоны подсчета
         <span class="badge-drag">drag</span>
       </div>
       <div class="preview-wrap" id="previewWrap">
         <canvas id="previewCanvas"></canvas>
         <div id="previewPh" class="preview-ph">Выберите видео — здесь появится первый кадр</div>
-        <div id="previewSpin" class="preview-spin hidden">Загрузка кадра…</div>
+        <div id="previewSpin" class="preview-spin hidden">Загрузка кадра...</div>
       </div>
       <div class="params-grid">
         <label class="field">
-          <span>Положение линии &nbsp;<b id="lineLabel">70%</b></span>
+          <span>Редактировать</span>
+          <select id="editTarget">
+            <option value="salon" selected>SALON polygon</option>
+            <option value="street">STREET polygon</option>
+            <option value="line">Generator line</option>
+          </select>
+        </label>
+        <div class="chk-row">
+          <button id="addPoint" type="button">+ point</button>
+          <button id="deletePoint" type="button">- point</button>
+          <button id="generatePolygons" type="button">Generate from line</button>
+        </div>
+        <label class="field">
+          <span>Положение линии-генератора <b id="lineLabel">70%</b></span>
           <input id="lineRatio" type="range" min="5" max="95" value="70">
         </label>
         <label class="field">
-          <span>Сторона салона</span>
+          <span>Сторона SALON для генератора</span>
           <select id="insideSide">
             <option value="top">сверху от линии</option>
             <option value="bottom" selected>снизу от линии</option>
           </select>
+          <button id="flipSide" type="button">Поменять сторону</button>
         </label>
       </div>
     </div>
 
-    <!-- Параметры -->
     <div class="sp-card">
       <div class="sp-title">Параметры</div>
       <div class="params-grid">
@@ -227,22 +294,20 @@
       <details class="adv">
         <summary>Параметры анализа (из application.yml)</summary>
         <div id="ymlParams">
-          <div class="yml-row"><span>process-every-n-frames</span><b id="pParamEvery">—</b></div>
-          <div class="yml-row"><span>count-anchor-y-ratio</span><b id="pParamAnchor">—</b></div>
-          <div class="yml-row"><span>door-zone-half-width-ratio</span><b id="pParamDoor">—</b></div>
-          <div class="yml-row"><span>count-min-anchor-movement-px</span><b id="pParamMovement">—</b></div>
-          <div class="yml-row"><span>confidence-threshold</span><b id="pParamConf">—</b></div>
+          <div class="yml-row"><span>process-every-n-frames</span><b id="pParamEvery">-</b></div>
+          <div class="yml-row"><span>count-anchor-y-ratio</span><b id="pParamAnchor">-</b></div>
+          <div class="yml-row"><span>count-min-anchor-movement-px</span><b id="pParamMovement">-</b></div>
+          <div class="yml-row"><span>confidence-threshold</span><b id="pParamConf">-</b></div>
         </div>
-        <p class="yml-hint">Изменяются в application.yml — требуют перезапуска.</p>
+        <p class="yml-hint">Меняются в application.yml и требуют перезапуска.</p>
       </details>
     </div>
 
-    <!-- Сводка + запуск -->
     <div class="sp-card">
       <div class="summary">
         <div class="sum-row"><span>Файл:</span><b id="sumFile">не выбран</b></div>
-        <div class="sum-row"><span>Линия:</span><b id="sumLine">50%</b></div>
-        <div class="sum-row"><span>Салон:</span><b id="sumSide">сверху</b></div>
+        <div class="sum-row"><span>Зоны:</span><b id="sumLine">SALON 4 / STREET 4</b></div>
+        <div class="sum-row"><span>Генератор:</span><b id="sumSide">positive</b></div>
         <div class="sum-row"><span>Нач. заполнение:</span><b id="sumInitial">авто</b></div>
       </div>
       <button id="btnStart" class="primary launch-btn" disabled>Запустить анализ →</button>
@@ -252,7 +317,6 @@
   </div>
 </div>
 
-<!-- ══════════════ ВКЛАДКА: МОНИТОРИНГ ══════════════ -->
 <div id="viewMonitor" class="shell hidden">
   <section class="dashboard">
     <div class="video-panel">
@@ -262,13 +326,13 @@
       </div>
       <div class="playback-bar">
         <div class="playback-controls">
-          <button id="btnFollowLive" class="playback-btn live active" type="button" title="Следовать за потоком">● LIVE</button>
-          <button id="btnStepBack" class="playback-btn" type="button" title="Предыдущий кадр">⏮</button>
-          <button id="btnStepForward" class="playback-btn" type="button" title="Следующий кадр">⏭</button>
+          <button id="btnFollowLive" class="playback-btn live active" type="button" title="Следовать за потоком">LIVE</button>
+          <button id="btnStepBack" class="playback-btn" type="button" title="Предыдущий кадр">Prev</button>
+          <button id="btnStepForward" class="playback-btn" type="button" title="Следующий кадр">Next</button>
         </div>
         <input id="timelineSlider" class="timeline-slider" type="range" min="0" max="0" value="0" disabled>
         <div class="playback-meta">
-          <span id="timelineLabel">кадр —</span>
+          <span id="timelineLabel">кадр -</span>
           <span id="timelineTime">00:00 / --:--</span>
         </div>
       </div>
@@ -287,13 +351,13 @@
 
       <div class="zone-card">
         <div class="panel-title">Зоны</div>
-        <div class="zone-row"><span class="dot inside"></span><span>Салон</span><b id="insideSideLabel">сверху</b></div>
-        <div class="zone-row"><span class="dot doorway"></span><span>Проем</span><b id="doorWidthLabel">-</b></div>
-        <div class="zone-row"><span class="dot outside"></span><span>Улица</span><b id="outsideSideLabel">снизу</b></div>
+        <div class="zone-row"><span class="dot inside"></span><span>SALON</span><b id="insideSideLabel">polygon</b></div>
+        <div class="zone-row"><span class="dot doorway"></span><span>BUFFER</span><b id="doorWidthLabel">polygon</b></div>
+        <div class="zone-row"><span class="dot outside"></span><span>STREET</span><b id="outsideSideLabel">polygon</b></div>
         <div class="zone-row"><span class="dot"></span><span>Видно всего</span><b id="visibleCount">0</b></div>
-        <div class="zone-row"><span class="dot inside"></span><span>В зоне салона</span><b id="insideCount">0</b></div>
-        <div class="zone-row"><span class="dot doorway"></span><span>В проеме</span><b id="doorwayCount">0</b></div>
-        <div class="zone-row"><span class="dot outside"></span><span>В зоне улицы</span><b id="outsideCount">0</b></div>
+        <div class="zone-row"><span class="dot inside"></span><span>В SALON</span><b id="insideCount">0</b></div>
+        <div class="zone-row"><span class="dot doorway"></span><span>В BUFFER</span><b id="doorwayCount">0</b></div>
+        <div class="zone-row"><span class="dot outside"></span><span>В STREET</span><b id="outsideCount">0</b></div>
       </div>
 
       <div class="events-card">
@@ -312,4 +376,6 @@
   </section>
 </div>
 
-<script src="/app.js?v=20260629-1"></script>
+<script src="/app.js?v=20260701-2"></script>
+</body>
+</html>

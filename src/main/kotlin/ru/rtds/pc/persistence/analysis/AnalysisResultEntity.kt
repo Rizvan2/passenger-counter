@@ -81,11 +81,35 @@ class AnalysisResultEntity(
     @Column(name = "duration_ms", nullable = false)
     var durationMs: Long = 0,
 
+    @Column(name = "salon_polygon_json", columnDefinition = "text")
+    var salonPolygonJson: String? = null,
+
+    @Column(name = "street_polygon_json", columnDefinition = "text")
+    var streetPolygonJson: String? = null,
+
+    @Column(name = "door_polygon_json", columnDefinition = "text")
+    var doorPolygonJson: String? = null,
+
     @Column(name = "line_y_ratio", nullable = false)
     var lineYRatio: Float = 0f,
 
     @Column(name = "inside_on_top", nullable = false)
     var insideOnTop: Boolean = true,
+
+    @Column(name = "line_ax_ratio")
+    var lineAxRatio: Float? = null,
+
+    @Column(name = "line_ay_ratio")
+    var lineAyRatio: Float? = null,
+
+    @Column(name = "line_bx_ratio")
+    var lineBxRatio: Float? = null,
+
+    @Column(name = "line_by_ratio")
+    var lineByRatio: Float? = null,
+
+    @Column(name = "inside_on_positive_side")
+    var insideOnPositiveSide: Boolean? = null,
 
     @Column(name = "started_at_ms", nullable = false)
     var startedAtMs: Long = 0,

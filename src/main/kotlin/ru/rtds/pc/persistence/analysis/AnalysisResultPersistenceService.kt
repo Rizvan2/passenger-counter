@@ -1,16 +1,16 @@
 package ru.rtds.pc.persistence.analysis
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import ru.rtds.pc.model.AnalysisSession
-import ru.rtds.pc.model.SessionStatus
-import ru.rtds.pc.model.VideoMetadata
 import java.nio.file.Paths
 
 @Service
 class AnalysisResultPersistenceService(
     private val analysisResultRepository: AnalysisResultRepository,
+    private val objectMapper: ObjectMapper,
     @Value("\${analysis-results.persistence.enabled:false}") private val enabled: Boolean,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -48,8 +48,16 @@ class AnalysisResultPersistenceService(
                     initialOnboard  = session.initialOnboard,
                     framesProcessed = session.framesProcessed,
                     durationMs      = session.durationMs(),
+                    salonPolygonJson = objectMapper.writeValueAsString(session.salonPolygon),
+                    streetPolygonJson = objectMapper.writeValueAsString(session.streetPolygon),
+                    doorPolygonJson = objectMapper.writeValueAsString(session.doorPolygon),
                     lineYRatio      = session.lineYRatio,
                     insideOnTop     = session.insideOnTop,
+                    lineAxRatio     = session.lineAxRatio,
+                    lineAyRatio     = session.lineAyRatio,
+                    lineBxRatio     = session.lineBxRatio,
+                    lineByRatio     = session.lineByRatio,
+                    insideOnPositiveSide = session.insideOnPositiveSide,
                     startedAtMs     = session.startedAt,
                     finishedAtMs    = session.finishedAt ?: System.currentTimeMillis(),
                     errorMessage    = session.errorMessage,
@@ -71,37 +79,4 @@ class AnalysisResultPersistenceService(
      */
     fun existsByHash(hash: String): Boolean =
         enabled && analysisResultRepository.existsBySourceHash(hash)
-
-    fun isAlreadyAnalyzed(hash: String, metadata: VideoMetadata): Boolean {
-        if (!enabled) return false
-
-        val finished = SessionStatus.FINISHED.name
-        if (analysisResultRepository.existsBySourceHashAndStatus(hash, finished)) {
-            return true
-        }
-
-        metadata.originalRelativePath?.let { relativePath ->
-            if (analysisResultRepository.existsByOriginalRelativePathAndStatus(relativePath, finished)) {
-                return true
-            }
-        }
-
-        val fileUid = metadata.fileUid
-        val deviceId = metadata.videoDeviceId
-        if (fileUid != null && deviceId != null &&
-            analysisResultRepository.existsByVideoDeviceIdAndFileUidAndStatus(deviceId, fileUid, finished)
-        ) {
-            return true
-        }
-
-        return false
-    }
-
-    fun loadFinishedSourceHashes(): Set<String> {
-        if (!enabled) return emptySet()
-        return analysisResultRepository
-            .findSourceHashesByStatus(SessionStatus.FINISHED.name)
-            .filter { it.isNotBlank() }
-            .toSet()
-    }
 }

@@ -2,7 +2,6 @@ package ru.rtds.pc.service
 
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
-import org.springframework.context.annotation.Lazy
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
 import ru.rtds.pc.dto.BoxDto
@@ -10,10 +9,15 @@ import ru.rtds.pc.dto.FrameUpdateDto
 import ru.rtds.pc.dto.PassengerEventDto
 import ru.rtds.pc.dto.SessionFinishedDto
 import ru.rtds.pc.ftp.service.UploadedVideoCleanupService
-import ru.rtds.pc.ftp.service.ReceivedVideoDispatcher
 import ru.rtds.pc.model.AnalysisSession
+import ru.rtds.pc.model.Detection
 import ru.rtds.pc.model.DoorZoneSide
 import ru.rtds.pc.model.SessionStatus
+import ru.rtds.pc.model.TrackCountState
+import ru.rtds.pc.model.TrackTrajectoryStore
+import ru.rtds.pc.model.TrackedPerson
+import ru.rtds.pc.model.TrajectorySample
+import kotlin.math.hypot
 import ru.rtds.pc.persistence.analysis.AnalysisResultPersistenceService
 import ru.rtds.pc.websocket.AnalysisWebSocketHandler
 import java.io.File
@@ -21,24 +25,41 @@ import java.io.File
 @Service
 class AnalysisService(
     private val frameReader: VideoFrameReader,
-    private val yoloDetector: YoloDetectorService,
+    private val detectors: List<FrameDetector>,
     private val tracker: PersonTracker,
     private val crossingCounter: CrossingLineCounter,
+    private val trackFateClassifier: TrackFateClassifier,
     private val wsHandler: AnalysisWebSocketHandler,
     private val analysisResultPersistenceService: AnalysisResultPersistenceService,
     private val uploadedVideoCleanupService: UploadedVideoCleanupService,
-    @Lazy private val receivedVideoDispatcher: ReceivedVideoDispatcher,
     @Value("\${pc.process-every-n-frames}") private val processEveryN: Int,
+    @Value("\${pc.detector:person}") private val detectorMode: String,
     @Value("\${pc.emit-frame-every-ms}") private val emitEveryMs: Long,
     @Value("\${pc.jpeg-quality}") private val jpegQuality: Float,
     @Value("\${pc.analysis-log-every-n-frames:30}") private val analysisLogEveryNFrames: Int,
-    @Value("\${pc.count-anchor-y-ratio:0.55}") private val countAnchorYRatio: Float,
-    @Value("\${pc.door-zone-half-width-ratio:0.04}") private val doorZoneHalfWidthRatio: Float,
-    @Value("\${pc.door-zone-min-half-width-px:10}") private val doorZoneMinHalfWidthPx: Float,
-    @Value("\${pc.door-zone-max-half-width-px:60}") private val doorZoneMaxHalfWidthPx: Float,
+    @Value("\${pc.count-anchor-x-ratio:0.5}") private val countAnchorXRatio: Float,
+    @Value("\${pc.count-anchor-y-ratio:0.95}") private val countAnchorYRatio: Float,
+    @Value("\${pc.capacity:120}") private val capacity: Int,
+    @Value("\${pc.count-mode:offline}") private val countMode: String,
+    @Value("\${pc.count-duplicate-alighting-hold-frames:18}") private val duplicateAlightingHoldFrames: Int,
+    @Value("\${pc.count-duplicate-alighting-distance-px:85}") private val duplicateAlightingDistancePx: Float,
+    @Value("\${pc.count-duplicate-alighting-reid-hold-frames:60}") private val duplicateAlightingReidHoldFrames: Int,
+    @Value("\${pc.count-duplicate-alighting-reid-similarity-threshold:0.82}") private val duplicateAlightingReidSimilarityThreshold: Float,
+    @Value("\${pc.head-tracking.enabled:true}") private val headTrackingEnabled: Boolean,
+    @Value("\${pc.head-tracking.height-ratio:0.28}") private val headTrackingHeightRatio: Float,
+    @Value("\${pc.head-tracking.width-ratio:0.65}") private val headTrackingWidthRatio: Float,
+    @Value("\${pc.head-tracking.min-size-px:12}") private val headTrackingMinSizePx: Float,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val initialOnboardWarmupFrames = 25
+
+    private data class AlightingLock(
+        val frameIndex: Int,
+        val anchorX: Float,
+        val anchorY: Float,
+        val headSize: Float,
+        val embedding: FloatArray?,
+    )
 
     @Async("analysisExecutor")
     fun startAsync(session: AnalysisSession) {
@@ -53,7 +74,6 @@ class AnalysisService(
             sendFinished(session)
             analysisResultPersistenceService.save(session)
             uploadedVideoCleanupService.afterAnalysis(session.sourcePath, session.status)
-            receivedVideoDispatcher.onAnalysisFinished(session.sourcePath, session.sourceHash)
             wsHandler.close(session.id)
             tracker.clear(session.id)
         }
@@ -66,15 +86,20 @@ class AnalysisService(
         }
 
         tracker.reset(session.id)
+        val detector = selectedDetector()
         var lastEmittedMs = 0L
         val pendingEvents = mutableListOf<PassengerCountEvent>()
+        val trajectories = TrackTrajectoryStore()
+        val alightingLocks = mutableListOf<AlightingLock>()
+        val suppressedAlightingTrackIds = mutableSetOf<Int>()
         log.info(
-            "Analysis started: session={}, file='{}', processEveryN={}, lineYRatio={}, insideSide={}",
+            "Analysis started: session={}, file='{}', processEveryN={}, salonPoints={}, streetPoints={}, doorPoints={}",
             session.id,
             session.sourcePath,
             processEveryN,
-            session.lineYRatio,
-            if (session.insideOnTop) "top" else "bottom",
+            session.salonPolygon.size,
+            session.streetPolygon.size,
+            session.doorPolygon.size,
         )
 
         val ok = frameReader.process(session.sourcePath, skipFrames = processEveryN - 1) { frameIdx, img, w, h ->
@@ -83,20 +108,54 @@ class AnalysisService(
                 return@process false
             }
 
-            val input = frameReader.preprocess(img, yoloDetector.inputSize)
-            val detections = yoloDetector.detect(input, w, h)
-            val lineY = h * session.lineYRatio
-            val doorHalfWidth = doorHalfWidth(h)
-            val doorZone = DoorCountingZone(lineY, doorHalfWidth, session.insideOnTop)
-            updateInitialOnboardEstimate(session, detections, doorZone)
-            val tracks = tracker.update(session.id, detections, img, lineY, session.insideOnTop)
-            logFrameDiagnostics(session, frameIdx, w, h, detections, tracks, doorZone)
+            val input = frameReader.preprocess(img, detector.inputSize)
+            val detections = trackingDetections(detector.detect(input, w, h), detector, w, h)
+            val countingZones = buildZones(session, w, h)
+            updateInitialOnboardEstimate(session, detections, countingZones)
+            val tracks = tracker.update(session.id, detections, img, countingZones)
+            expireAlightingLocks(alightingLocks, frameIdx)
+            logFrameDiagnostics(session, frameIdx, w, h, detections, tracks, countingZones)
+
+            // Pass 1: record the trajectory of every visible track. Coasting tracks carry stale
+            // boxes, so only genuinely-seen samples are kept — the offline classifier reconciles
+            // the final counts once the whole clip is known.
+            for (track in tracks) {
+                if (track.framesSinceUpdate != 0) continue
+                val ax = track.detection.anchorX(countAnchorXRatio)
+                val ay = track.detection.anchorY(countAnchorYRatio)
+                trajectories.record(
+                    track.id,
+                    TrajectorySample(
+                        frameIndex = frameIdx,
+                        zone = countingZones.zoneFor(ax, ay),
+                        inDoor = countingZones.inDoor(ax, ay),
+                        anchorX = ax,
+                        anchorY = ay,
+                        headSize = hypot(track.detection.width, track.detection.height),
+                    ),
+                )
+            }
 
             for (track in tracks) {
-                val delta = crossingCounter.updateTrackState(track, doorZone, frameIdx)
+                val delta = crossingCounter.updateTrackState(
+                    track,
+                    countingZones,
+                    frameIdx,
+                    allowPreboardedExit = true,
+                )
                 if (delta.boardings != 0) session.totalBoardings.addAndGet(delta.boardings)
-                if (delta.alightings != 0) session.totalAlightings.addAndGet(delta.alightings)
+                val alightingDelta = reconcileAlightingDelta(
+                    track = track,
+                    delta = delta,
+                    frameIdx = frameIdx,
+                    alightingLocks = alightingLocks,
+                    suppressedTrackIds = suppressedAlightingTrackIds,
+                )
+                if (alightingDelta != 0) session.totalAlightings.addAndGet(alightingDelta)
                 delta.event?.let {
+                    if (delta.alightings != alightingDelta) {
+                        return@let
+                    }
                     log.info(
                         "Passenger event: session={}, frame={}, track={}, direction={}, from={}, to={}, totals(boardings={}, alightings={})",
                         session.id,
@@ -111,14 +170,23 @@ class AnalysisService(
                     pendingEvents.add(it)
                 }
             }
-            session.currentOnboard =
-                session.initialOnboard + session.totalBoardings.get() - session.totalAlightings.get()
+            val rawOnboard = session.initialOnboard + session.totalBoardings.get() - session.totalAlightings.get()
+            session.currentOnboard = rawOnboard.coerceIn(0, capacity)
+            if (session.currentOnboard != rawOnboard) {
+                log.warn(
+                    "Onboard balance clamped for session {}: raw={}, clamped={}, capacity={}",
+                    session.id,
+                    rawOnboard,
+                    session.currentOnboard,
+                    capacity,
+                )
+            }
 
             session.framesProcessed++
 
             val now = System.currentTimeMillis()
             if (now - lastEmittedMs >= emitEveryMs) {
-                emit(session, frameIdx, img, w, h, tracks, doorZone, pendingEvents.toList())
+                emit(session, frameIdx, img, w, h, tracks, countingZones, pendingEvents.toList())
                 pendingEvents.clear()
                 lastEmittedMs = now
             }
@@ -128,6 +196,33 @@ class AnalysisService(
         if (session.status == SessionStatus.RUNNING) {
             session.status = if (ok) SessionStatus.FINISHED else SessionStatus.FAILED
         }
+
+        // Pass 2: offline classification keeps full-trajectory boardings, while alightings prefer
+        // the streaming counter because it suppresses short-lived duplicate track fragments.
+        if (countMode.equals("offline", ignoreCase = true)) {
+            val streamingBoardings = session.totalBoardings.get()
+            val streamingAlightings = session.totalAlightings.get()
+            val offline = trackFateClassifier.classify(trajectories.trajectories())
+            val reconciledBoardings = offline.boardings
+            val reconciledAlightings = if (streamingAlightings > 0) streamingAlightings else offline.alightings
+            session.totalBoardings.set(reconciledBoardings)
+            session.totalAlightings.set(reconciledAlightings)
+            val rawOnboard = session.initialOnboard + reconciledBoardings - reconciledAlightings
+            session.currentOnboard = rawOnboard.coerceIn(0, capacity)
+            log.info(
+                "Offline reconciliation: session={}, tracks={}, streaming(b={}, a={}) -> offline(b={}, a={}) -> final(b={}, a={}), fates={}",
+                session.id,
+                trajectories.size,
+                streamingBoardings,
+                streamingAlightings,
+                offline.boardings,
+                offline.alightings,
+                reconciledBoardings,
+                reconciledAlightings,
+                offline.fateCounts,
+            )
+        }
+
         log.info(
             "Analysis finished: session={}, status={}, framesProcessed={}, boardings={}, alightings={}, onboard={}",
             session.id,
@@ -139,11 +234,120 @@ class AnalysisService(
         )
     }
 
-    private fun doorHalfWidth(frameHeight: Int): Float {
-        val minWidth = doorZoneMinHalfWidthPx.coerceAtLeast(1f)
-        val maxWidth = doorZoneMaxHalfWidthPx.coerceAtLeast(minWidth)
-        return (frameHeight * doorZoneHalfWidthRatio).coerceIn(minWidth, maxWidth)
+    private fun reconcileAlightingDelta(
+        track: TrackedPerson,
+        delta: CrossingLineCounter.CountDelta,
+        frameIdx: Int,
+        alightingLocks: MutableList<AlightingLock>,
+        suppressedTrackIds: MutableSet<Int>,
+    ): Int {
+        if (delta.alightings < 0 && suppressedTrackIds.remove(track.id)) {
+            log.debug("Ignored suppressed alighting cancellation: track={}", track.id)
+            return 0
+        }
+        if (delta.alightings <= 0) return delta.alightings
+
+        val anchorX = track.detection.anchorX(countAnchorXRatio)
+        val anchorY = track.detection.anchorY(countAnchorYRatio)
+        val headSize = hypot(track.detection.width, track.detection.height)
+        expireAlightingLocks(alightingLocks, frameIdx)
+
+        val duplicate = alightingLocks.any {
+            isDuplicateAlighting(anchorX, anchorY, headSize, track.embedding, frameIdx, it)
+        }
+        if (duplicate) {
+            suppressedTrackIds += track.id
+            suppressDuplicateAlightingState(track)
+            log.debug("Suppressed duplicate alighting fragment: track={}, frame={}", track.id, frameIdx)
+            return 0
+        }
+
+        alightingLocks += AlightingLock(frameIdx, anchorX, anchorY, headSize, track.embedding?.copyOf())
+        return delta.alightings
     }
+
+    private fun suppressDuplicateAlightingState(track: TrackedPerson) {
+        track.isAlighted = false
+        track.countedDirection = null
+        track.countState = TrackCountState.OUTSIDE
+        if (track.crossingCount > 0) {
+            track.crossingCount--
+        }
+    }
+
+    private fun expireAlightingLocks(alightingLocks: MutableList<AlightingLock>, frameIdx: Int) {
+        val holdFrames = maxOf(
+            duplicateAlightingHoldFrames,
+            duplicateAlightingReidHoldFrames,
+            processEveryN.coerceAtLeast(1),
+        )
+        alightingLocks.removeAll { frameIdx - it.frameIndex > holdFrames }
+    }
+
+    private fun isDuplicateAlighting(
+        anchorX: Float,
+        anchorY: Float,
+        headSize: Float,
+        embedding: FloatArray?,
+        frameIdx: Int,
+        lock: AlightingLock,
+    ): Boolean {
+        val distance = hypot(anchorX - lock.anchorX, anchorY - lock.anchorY)
+        val age = frameIdx - lock.frameIndex
+        val sizeLimit = maxOf(headSize, lock.headSize) * 1.5f
+        val geometryHold = duplicateAlightingHoldFrames.coerceAtLeast(processEveryN.coerceAtLeast(1))
+        if (age <= geometryHold && distance <= minOf(duplicateAlightingDistancePx, sizeLimit)) {
+            return true
+        }
+
+        if (age > duplicateAlightingReidHoldFrames.coerceAtLeast(0)) return false
+        val lockEmbedding = lock.embedding ?: return false
+        val currentEmbedding = embedding ?: return false
+        val similarity = embeddingSimilarity(currentEmbedding, lockEmbedding)
+        return similarity >= duplicateAlightingReidSimilarityThreshold
+    }
+
+    private fun embeddingSimilarity(a: FloatArray, b: FloatArray): Float {
+        if (a.size != b.size) return 0f
+        var dot = 0f
+        for (i in a.indices) dot += a[i] * b[i]
+        return dot
+    }
+
+    private fun selectedDetector(): FrameDetector =
+        detectors.firstOrNull { it.id.equals(detectorMode, ignoreCase = true) }
+            ?: throw IllegalStateException(
+                "Unknown detector '$detectorMode'. Available detectors: ${detectors.joinToString { it.id }}"
+            )
+
+    private fun trackingDetections(
+        detections: List<Detection>,
+        detector: FrameDetector,
+        frameWidth: Int,
+        frameHeight: Int,
+    ): List<Detection> {
+        if (!headTrackingEnabled || detector.id.equals("head", ignoreCase = true)) {
+            return detections
+        }
+        return detections.map { person ->
+            person.headRegion(
+                frameWidth = frameWidth,
+                frameHeight = frameHeight,
+                heightRatio = headTrackingHeightRatio,
+                widthRatio = headTrackingWidthRatio,
+                minSizePx = headTrackingMinSizePx,
+            ).copy(body = person)
+        }
+    }
+
+    private fun buildZones(session: AnalysisSession, frameWidth: Int, frameHeight: Int): CountingZones =
+        CountingZones.fromNormalizedPolygons(
+            salonPolygonRatio = session.salonPolygon,
+            streetPolygonRatio = session.streetPolygon,
+            doorPolygonRatio = session.doorPolygon,
+            frameWidth = frameWidth,
+            frameHeight = frameHeight,
+        )
 
     private fun logFrameDiagnostics(
         session: AnalysisSession,
@@ -152,29 +356,34 @@ class AnalysisService(
         height: Int,
         detections: List<ru.rtds.pc.model.Detection>,
         tracks: List<ru.rtds.pc.model.TrackedPerson>,
-        doorZone: DoorCountingZone,
+        countingZones: CountingZones,
     ) {
         if (!log.isDebugEnabled) return
         val every = analysisLogEveryNFrames.coerceAtLeast(1)
         if (frameIdx % every != 0) return
 
-        val detectionZones = detections.groupingBy { doorZone.sideFor(it.anchorY(countAnchorYRatio)) }.eachCount()
+        val detectionZones = detections
+            .map { countingZones.zoneFor(it, countAnchorXRatio, countAnchorYRatio) }
+            .groupingBy { it }
+            .eachCount()
+        val detectionsInDoor = detections.count { countingZones.inDoor(it, countAnchorXRatio, countAnchorYRatio) }
         val trackSummary = tracks.take(12).joinToString(separator = "; ") {
-            "#${it.id}:${it.countState}/${it.stableZone} anchorY=${"%.1f".format(it.detection.anchorY(countAnchorYRatio))} lost=${it.framesSinceUpdate}"
+            "#${it.id}:${it.countState}/${it.stableZone} door=${it.isInDoor} lost=${it.framesSinceUpdate}"
         }
         log.debug(
-            "Frame diagnostics: session={}, frame={}, size={}x{}, lineY={}, doorway=[{},{}], insideSide={}, anchorRatio={}, detections={} zones={}, tracks={} [{}]",
+            "Frame diagnostics: session={}, frame={}, size={}x{}, salonPoints={}, streetPoints={}, doorPoints={}, anchorRatio=({},{}), detections={} zones={}, detectionsInDoor={}, tracks={} [{}]",
             session.id,
             frameIdx,
             width,
             height,
-            "%.1f".format(doorZone.centerY),
-            "%.1f".format(doorZone.topBoundaryY),
-            "%.1f".format(doorZone.bottomBoundaryY),
-            if (doorZone.insideOnTop) "top" else "bottom",
+            countingZones.salonPolygonPx.size,
+            countingZones.streetPolygonPx.size,
+            countingZones.doorPolygonPx.size,
+            "%.2f".format(countAnchorXRatio),
             "%.2f".format(countAnchorYRatio),
             detections.size,
             detectionZones,
+            detectionsInDoor,
             tracks.size,
             trackSummary,
         )
@@ -183,45 +392,40 @@ class AnalysisService(
     private fun updateInitialOnboardEstimate(
         session: AnalysisSession,
         detections: List<ru.rtds.pc.model.Detection>,
-        doorZone: DoorCountingZone,
+        countingZones: CountingZones,
     ) {
-        val insideCount = detections.count { doorZone.sideFor(it.anchorY(countAnchorYRatio)) == DoorZoneSide.INSIDE }
-        val doorwayCount = detections.count { doorZone.sideFor(it.anchorY(countAnchorYRatio)) == DoorZoneSide.DOORWAY }
-        val outsideCount = detections.count { doorZone.sideFor(it.anchorY(countAnchorYRatio)) == DoorZoneSide.OUTSIDE }
+        val sides = detections.map { countingZones.zoneFor(it, countAnchorXRatio, countAnchorYRatio) }
+        val doorwayCount = detections.count { countingZones.inDoor(it, countAnchorXRatio, countAnchorYRatio) }
+        val insideCount = sides.count { it == DoorZoneSide.INSIDE }
+        val bufferCount = sides.count { it == DoorZoneSide.BUFFER }
+        val outsideCount = sides.count { it == DoorZoneSide.OUTSIDE }
 
         session.visibleDetections = detections.size
         session.insideDetections = insideCount
+        session.bufferDetections = bufferCount
         session.doorwayDetections = doorwayCount
         session.outsideDetections = outsideCount
 
         if (session.initialOnboardDetected) return
 
-        // Предупреждаем если линия выставлена так, что внутри никого нет — это признак
-        // неверного insideOnTop или неверного положения линии. Fallback убран намеренно:
-        // молчаливое использование всех детекций как "внутри" давало некорректное начальное
-        // заполнение когда салон снаружи кадра (все люди на улице).
         if (insideCount == 0 && detections.isNotEmpty() && session.initialOnboardFrames == 0) {
             log.warn(
-                "Initial onboard: no detections in INSIDE zone for session {} (visible={}, insideOnTop={}). " +
-                        "Check lineYRatio and insideOnTop settings — line may be cutting the wrong side.",
+                "Initial onboard: no detections in SALON polygon for session {} (visible={})",
                 session.id,
                 detections.size,
-                doorZone.insideOnTop,
             )
         }
 
         val candidate = insideCount
-
         if (candidate > session.initialOnboardCandidate) {
             session.initialOnboardCandidate = candidate
             session.initialOnboard = candidate
             log.info(
-                "Initial onboard estimate updated for session {}: {} (inside={}, visible={}, side={})",
+                "Initial onboard estimate updated for session {}: {} (inside={}, visible={})",
                 session.id,
                 candidate,
                 insideCount,
                 detections.size,
-                if (doorZone.insideOnTop) "top" else "bottom",
             )
         }
 
@@ -246,20 +450,24 @@ class AnalysisService(
         w: Int,
         h: Int,
         tracks: List<ru.rtds.pc.model.TrackedPerson>,
-        doorZone: DoorCountingZone,
+        countingZones: CountingZones,
         events: List<PassengerCountEvent>,
     ) {
         val jpeg = frameReader.encodeJpegBase64(img, jpegQuality)
-        val boxes = tracks.map {
+        val visibleTracks = tracks.filter { it.framesSinceUpdate == 0 }
+        val boxes = visibleTracks.map {
             BoxDto(
                 trackId = it.id,
                 x1 = it.detection.x1,
                 y1 = it.detection.y1,
                 x2 = it.detection.x2,
                 y2 = it.detection.y2,
+                anchorX = it.detection.anchorX(countAnchorXRatio),
+                anchorY = it.detection.anchorY(countAnchorYRatio),
                 confidence = it.detection.confidence,
                 isBoarded = it.isBoarded,
                 isAlighted = it.isAlighted,
+                inDoor = it.isInDoor,
                 zone = it.stableZone.name,
                 state = it.countState.name,
             )
@@ -284,10 +492,23 @@ class AnalysisService(
                 width = w,
                 height = h,
                 detections = boxes,
-                lineY = doorZone.centerY,
-                doorTopY = doorZone.topBoundaryY,
-                doorBottomY = doorZone.bottomBoundaryY,
-                insideOnTop = doorZone.insideOnTop,
+                salonPolygon = countingZones.salonPolygonPx,
+                streetPolygon = countingZones.streetPolygonPx,
+                doorPolygon = countingZones.doorPolygonPx,
+                lineY = session.lineYRatio * h,
+                doorTopY = session.lineYRatio * h,
+                doorBottomY = session.lineYRatio * h,
+                insideOnTop = session.insideOnTop,
+                lineAx = session.lineAxRatio * w,
+                lineAy = session.lineAyRatio * h,
+                lineBx = session.lineBxRatio * w,
+                lineBy = session.lineByRatio * h,
+                lineAxRatio = session.lineAxRatio,
+                lineAyRatio = session.lineAyRatio,
+                lineBxRatio = session.lineBxRatio,
+                lineByRatio = session.lineByRatio,
+                insideOnPositiveSide = session.insideOnPositiveSide,
+                doorCorridor = emptyList(),
                 events = eventDtos,
                 boardings = session.totalBoardings.get(),
                 alightings = session.totalAlightings.get(),
@@ -296,6 +517,7 @@ class AnalysisService(
                 onboard = session.currentOnboard,
                 visibleDetections = session.visibleDetections,
                 insideDetections = session.insideDetections,
+                bufferDetections = session.bufferDetections,
                 doorwayDetections = session.doorwayDetections,
                 outsideDetections = session.outsideDetections,
                 fps = fps,

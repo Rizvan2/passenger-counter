@@ -26,52 +26,120 @@ ftp:
   port: 2022
   user: admin
   password: admin
-  # CarCam: {deviceId}/{YYYY-MM-DD}/*.avi
-  home: ./videos
+  home: ./videos/incoming
   processed-dir: ./videos/processed
   passive:
     ports: 30000-30010
     external-address: ""
-  # true  = тестовый режим: ролик перемещается в processed/<статус>/ после анализа
-  #         (виден через интерфейс, можно проверить результат вручную)
-  # false = продовый режим: ролик сразу удаляется после анализа
-  keep-after-analysis: true   # тест — файлы в processed/finished/ или processed/failed/
-#    keep-after-analysis: false  # прод — файлы удаляются сразу после анализа
+  keep-after-analysis: true
   analysis:
     line-y-ratio: 0.5
-    inside-on-top: false   # салон снизу — камера из глубины салона смотрит на дверь
+    line-ax-ratio: 0.18
+    line-ay-ratio: 0.88
+    line-bx-ratio: 0.46
+    line-by-ratio: 0.12
+    salon-polygon:
+      - x: 0.02
+        y: 0.02
+      - x: 0.32
+        y: 0.02
+      - x: 0.38
+        y: 0.43
+      - x: 0.39
+        y: 0.84
+      - x: 0.79
+        y: 0.77
+      - x: 0.73
+        y: 0.02
+      - x: 0.98
+        y: 0.02
+      - x: 0.98
+        y: 0.98
+      - x: 0.08
+        y: 0.99
+    street-polygon:
+      - x: 0.46
+        y: 0.12
+      - x: 0.68
+        y: 0.12
+      - x: 0.68
+        y: 0.36
+      - x: 0.46
+        y: 0.36
+    door-polygon:
+      - x: 0.32
+        y: 0.02
+      - x: 0.76
+        y: 0.02
+      - x: 0.75
+        y: 0.38
+      - x: 0.80
+        y: 0.78
+      - x: 0.39
+        y: 0.80
+      - x: 0.37
+        y: 0.42
+    inside-on-positive-side: true
+    inside-on-top: false
     auto-initial-onboard: true
     initial-onboard: 0
 
 pc:
   models-dir: ./models
   videos-dir: ./videos
-  local-ingest:
-    enabled: ${PC_LOCAL_INGEST_ENABLED:true}
-    scan-interval-ms: ${PC_LOCAL_INGEST_SCAN_INTERVAL_MS:15000}
   min-frame-height: 480
+  detector: person
+  onnx-provider: cpu
   yolo-input-size: 416
+  head-input-size: 640
+  head-model-path: ./models/head-detector.onnx
+  head-model-urls: ""
+  head-output-format: auto
+  head-confidence-threshold: 0.35
   confidence-threshold: 0.35
   nms-iou-threshold: 0.5
   reid-similarity-threshold: 0.65
+  reid-refresh-every-frames: 4
   track-active-lost-frames: 45
   track-center-distance-threshold-px: 90
+  track-center-size-multiplier: 2.6
+  track-counted-iou-match-threshold: 0.12
+  track-counted-continuation-iou-threshold: 0.25
+  track-counted-continuation-distance-px: 70
+  track-counted-continuation-lost-frames: 2
+  track-counted-reid-continuation-lost-frames: 20
+  track-counted-reid-continuation-distance-px: 260
+  track-counted-reid-similarity-threshold: 0.78
   side-fallback-max-distance-px: 250
+  side-fallback-max-lost-frames: 8
+  count-duplicate-alighting-hold-frames: 18
+  count-duplicate-alighting-distance-px: 85
+  count-duplicate-alighting-reid-hold-frames: 60
+  count-duplicate-alighting-reid-similarity-threshold: 0.82
   process-every-n-frames: 3
   emit-frame-every-ms: 120
   jpeg-quality: 0.45
   analysis-log-every-n-frames: 30
-  door-zone-half-width-ratio: 0.04
-  door-zone-min-half-width-px: 16
-  door-zone-max-half-width-px: 60
-  count-anchor-y-ratio: 0.75
+  count-anchor-x-ratio: 0.5
+  count-anchor-y-ratio: 0.5
+  count-mode: offline
   count-min-anchor-movement-px: 40
-  count-center-line-crossing: false
+  count-head-scale-grow-ratio: 1.08
+  count-head-scale-shrink-ratio: 0.92
+  count-scale-window: 5
+  count-lost-at-door-frames: 3
+  count-min-door-exit-visible-frames: 12
   count-min-stable-frames: 3
+  head-tracking:
+    enabled: true
+    height-ratio: 0.28
+    width-ratio: 0.65
+    min-size-px: 12
+  capacity: 120
 
 analysis-results:
   persistence:
-    enabled: ${ANALYSIS_RESULTS_PERSISTENCE_ENABLED:true}
+    enabled: ${ANALYSIS_RESULTS_PERSISTENCE_ENABLED:false}
 
 logging:
   level:

@@ -15,11 +15,20 @@ import java.nio.file.StandardCopyOption
 @Service
 class ModelDownloadService(
     @Value("\${pc.models-dir}") private val modelsDir: String,
+    @Value("\${pc.detector:person}") private val detectorMode: String,
+    @Value("\${pc.head-model-path:}") private val configuredHeadModelPath: String,
+    @Value("\${pc.head-model-urls:}") private val configuredHeadModelUrls: String,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     val yoloPath: Path get() = Paths.get(modelsDir, "yolov8n.onnx")
     val osnetPath: Path get() = Paths.get(modelsDir, "osnet_x0_25.onnx")
+    val headPath: Path
+        get() = configuredHeadModelPath
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?.let { Paths.get(it) }
+            ?: Paths.get(modelsDir, "head-detector.onnx")
 
     // Несколько источников на случай если основной недоступен.
     // SpotLab/Kalray отдают стандартный YOLOv8 output [1, 84, 8400].
@@ -33,14 +42,22 @@ class ModelDownloadService(
         "https://huggingface.co/anriha/osnet_x0_25_msmt17/resolve/main/osnet_x0_25_msmt17.onnx",
     )
 
+    private val headUrls: List<String>
+        get() = configuredHeadModelUrls
+            .split(',', ';', '\n')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
     @PostConstruct
     fun ensureModels() {
         val dir = Paths.get(modelsDir).toAbsolutePath()
         Files.createDirectories(dir)
         log.info("Models directory: {}", dir)
+        val needsPersonDetector = detectorMode.equals("person", ignoreCase = true)
+        val needsHeadDetector = detectorMode.equals("head", ignoreCase = true)
 
         // YOLO критичен. Если его нет и не скачается — даём понятное сообщение.
-        if (!fileExistsAndValid(yoloPath)) {
+        if (needsPersonDetector && !fileExistsAndValid(yoloPath)) {
             val ok = tryDownload(yoloPath, yoloUrls, "YOLOv8n")
             if (!ok) {
                 log.error("=".repeat(70))
@@ -54,8 +71,21 @@ class ModelDownloadService(
                     "YOLO model not available. See logs above for manual download instructions."
                 )
             }
-        } else {
+        } else if (fileExistsAndValid(yoloPath)) {
             log.info("YOLOv8n already present: {} ({} bytes)", yoloPath, Files.size(yoloPath))
+        }
+
+        if (needsHeadDetector && !fileExistsAndValid(headPath)) {
+            val ok = if (headUrls.isNotEmpty()) tryDownload(headPath, headUrls, "Head detector") else false
+            if (!ok) {
+                log.error("=".repeat(70))
+                log.error("Head detector selected, but model is not available.")
+                log.error("Put ONNX model to: {}", headPath)
+                log.error("Or configure pc.head-model-path / pc.head-model-urls.")
+                log.error("=".repeat(70))
+            }
+        } else if (fileExistsAndValid(headPath)) {
+            log.info("Head detector already present: {} ({} bytes)", headPath, Files.size(headPath))
         }
 
         // OSNet — опциональный. Если не скачается, ReID просто отключается.
@@ -70,6 +100,7 @@ class ModelDownloadService(
     }
 
     fun isReidAvailable(): Boolean = fileExistsAndValid(osnetPath)
+    fun isHeadAvailable(): Boolean = fileExistsAndValid(headPath)
 
     private fun fileExistsAndValid(path: Path): Boolean =
         Files.exists(path) && Files.size(path) > 100_000
