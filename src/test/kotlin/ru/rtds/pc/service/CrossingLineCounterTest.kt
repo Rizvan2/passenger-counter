@@ -25,6 +25,8 @@ class CrossingLineCounterTest {
         lostAtDoorFrames = 2,
         minDoorExitVisibleFrames = 3,
         minStableFrames = 1,
+        preboardedExitMaxFirstSeenFrame = 20,
+        processEveryNFrames = 1,
     )
 
     @Test
@@ -70,6 +72,33 @@ class CrossingLineCounterTest {
     }
 
     @Test
+    fun `door recency window respects skipped source frames`() {
+        val skippedFrameCounter = CrossingLineCounter(
+            countAnchorXRatio = 0.5f,
+            countAnchorYRatio = 0.75f,
+            minAnchorMovementPx = 1f,
+            headScaleGrowRatio = 1.05f,
+            headScaleShrinkRatio = 0.95f,
+            scaleWindow = 3,
+            lostAtDoorFrames = 2,
+            minDoorExitVisibleFrames = 3,
+            minStableFrames = 1,
+            preboardedExitMaxFirstSeenFrame = 20,
+            processEveryNFrames = 3,
+        )
+        val track = TrackedPerson(1, detection(anchorY = 35f, height = 28f))
+        skippedFrameCounter.updateTrackState(track, zones, 1)
+        track.detection = detection(anchorY = 50f, height = 22f)
+        skippedFrameCounter.updateTrackState(track, zones, 4)
+        track.detection = detection(anchorY = 70f, height = 20f)
+
+        val delta = skippedFrameCounter.updateTrackState(track, zones, 10)
+
+        assertEquals(0, delta.boardings)
+        assertEquals(1, delta.alightings)
+    }
+
+    @Test
     fun `preboarded person seen in door then outside counts one alighting`() {
         val track = TrackedPerson(1, detection(anchorY = 50f, height = 24f))
         counter.updateTrackState(track, zones, 1, allowPreboardedExit = true)
@@ -99,7 +128,7 @@ class CrossingLineCounterTest {
     }
 
     @Test
-    fun `long visible door track lost at exit counts one alighting`() {
+    fun `long visible door track lost without salon history does not count alighting`() {
         val doorOnlyExitZones = CountingZones.fromNormalizedPolygons(
             salonPolygonRatio = rectangle(0f, 0f, 1f, 0.45f),
             streetPolygonRatio = rectangle(0.7f, 0.7f, 0.9f, 0.9f),
@@ -118,7 +147,18 @@ class CrossingLineCounterTest {
         val delta = counter.updateTrackState(track, doorOnlyExitZones, 9, allowPreboardedExit = true)
 
         assertEquals(0, delta.boardings)
-        assertEquals(1, delta.alightings)
+        assertEquals(0, delta.alightings)
+    }
+
+    @Test
+    fun `late new track born at door does not count as another alighting`() {
+        val track = TrackedPerson(1, detection(anchorY = 50f, height = 20f))
+        counter.updateTrackState(track, zones, 100, allowPreboardedExit = true)
+        track.detection = detection(anchorY = 70f, height = 20f)
+        val outside = counter.updateTrackState(track, zones, 101, allowPreboardedExit = true)
+
+        assertEquals(0, outside.boardings)
+        assertEquals(0, outside.alightings)
     }
 
     @Test
@@ -131,6 +171,25 @@ class CrossingLineCounterTest {
 
         assertEquals(0, delta.boardings)
         assertEquals(0, delta.alightings)
+    }
+
+    @Test
+    fun `new track born inside door overlap does not count boarding`() {
+        val overlappingDoorZones = CountingZones.fromNormalizedPolygons(
+            salonPolygonRatio = rectangle(0f, 0f, 1f, 0.55f),
+            streetPolygonRatio = rectangle(0f, 0.65f, 1f, 1f),
+            doorPolygonRatio = rectangle(0.35f, 0.30f, 0.65f, 0.60f),
+            frameWidth = 100,
+            frameHeight = 100,
+        )
+        val track = TrackedPerson(1, detection(anchorY = 42f, height = 24f))
+
+        val first = counter.updateTrackState(track, overlappingDoorZones, 1)
+        track.detection = detection(anchorY = 42f, height = 24f)
+        val second = counter.updateTrackState(track, overlappingDoorZones, 2)
+
+        assertEquals(0, first.boardings + second.boardings)
+        assertEquals(0, first.alightings + second.alightings)
     }
 
     @Test

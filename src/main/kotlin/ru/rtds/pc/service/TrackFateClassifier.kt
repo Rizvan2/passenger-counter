@@ -53,11 +53,15 @@ class TrackFateClassifier(
     @Value("\${pc.count-head-scale-shrink-ratio:0.92}") private val shrinkRatio: Float,
     @Value("\${pc.count-min-anchor-movement-px:40}") private val minMovementPx: Float,
     @Value("\${pc.count-lost-at-door-frames:3}") private val lostAtDoorFrames: Int,
+    @Value("\${pc.count-min-body-height-ratio:0.0}") private val minBodyHeightRatio: Float,
+    @Value("\${pc.count-successor-max-gap-frames:50}") private val successorMaxGapFrames: Int,
+    @Value("\${pc.count-successor-max-distance-px:120}") private val successorMaxDistancePx: Float,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun classify(trajectories: Collection<TrackTrajectory>): OfflineCountResult {
-        val perTrack = trajectories.map { classifyTrack(it) }
+        val list = trajectories.filter { it.samples.isNotEmpty() }
+        val perTrack = list.map { classifyTrack(it, hasStationaryNewbornSuccessor(it, list)) }
         val boardings = perTrack.sumOf { it.boardings }
         val alightings = perTrack.sumOf { it.alightings }
         val fateCounts = perTrack.groupingBy { it.fate }.eachCount()
@@ -68,7 +72,38 @@ class TrackFateClassifier(
         return OfflineCountResult(boardings, alightings, perTrack, fateCounts)
     }
 
-    private fun classifyTrack(trajectory: TrackTrajectory): TrackFateResult {
+    /**
+     * Id-switch detector for a STANDING person: track A dies and, right after, a NEW track is
+     * born at (almost) the same spot and stands still. That is the same person re-identified
+     * under a new id — not an exit — so A's lost-at-exit branch must be suppressed.
+     *
+     * Deliberately narrow so it does NOT fire on a merge of two exiting people: there the other
+     * track already EXISTED before A died (they coexisted), so it is not a newborn successor,
+     * and A keeps its lost-at-exit. A walking successor (next exiter appearing at the door, or an
+     * id switch mid-exit) moves in its early window and is also not matched here.
+     */
+    private fun hasStationaryNewbornSuccessor(
+        track: TrackTrajectory,
+        all: List<TrackTrajectory>,
+    ): Boolean {
+        val last = track.samples.lastOrNull() ?: return false
+        for (other in all) {
+            if (other === track) continue
+            val first = other.samples.firstOrNull() ?: continue
+            // Born strictly AFTER this track's death, within a short gap.
+            if (first.frameIndex <= last.frameIndex) continue
+            if (first.frameIndex - last.frameIndex > successorMaxGapFrames) continue
+            // Born where this track died.
+            if (hypot(first.anchorX - last.anchorX, first.anchorY - last.anchorY) > successorMaxDistancePx) continue
+            // ...and standing still in its early window (a re-born standing person, not a walker).
+            val early = other.samples.take(minStableFrames.coerceAtLeast(2))
+            val maxShift = early.maxOf { hypot(it.anchorX - first.anchorX, it.anchorY - first.anchorY) }
+            if (maxShift < minMovementPx) return true
+        }
+        return false
+    }
+
+    private fun classifyTrack(trajectory: TrackTrajectory, suppressLostAtExit: Boolean): TrackFateResult {
         val id = trajectory.trackId
         val samples = trajectory.samples
         if (samples.size < minStableFrames) {
@@ -79,6 +114,15 @@ class TrackFateClassifier(
         val everInDoor = samples.any { it.inDoor }
         val tailWindow = samples.takeLast(lostAtDoorFrames.coerceAtLeast(2))
         val endAtExit = tailWindow.any { it.inDoor || it.zone == DoorZoneSide.OUTSIDE }
+
+        // Far-silhouette guard: a street pedestrian seen through the doorway stays SMALL for the
+        // whole track (never comes near the camera). A real boarder/alighter is close to the door
+        // at some point, so their body box is large in frame at least once. If the body never
+        // exceeded the ratio, this is a passer-by outside — never count it, whatever zones its
+        // anchor drifted through.
+        if (minBodyHeightRatio > 0f && samples.maxOf { it.bodyHeightRatio } < minBodyHeightRatio) {
+            return TrackFateResult(id, 0, 0, TrackFate.PASSERBY, "small silhouette (far pedestrian)")
+        }
 
         // No confirmed side at all: pure buffer/jitter, or seen too briefly to trust.
         if (visits.isEmpty()) {
@@ -117,27 +161,60 @@ class TrackFateClassifier(
             }
         }
 
-        // If a track is first detected in the door and then stabilizes in the salon, there may be
-        // no stable OUTSIDE visit at all: the person entered while already under the camera.
-        if (boardings == 0 && everInDoor && visits.first().zone == DoorZoneSide.INSIDE) {
-            boardings++
-            reasons.append("born-in-door -> salon entry; ")
+        // If a track is first detected at the door and then stabilizes in the salon, there may be
+        // no stable OUTSIDE visit at all (typical when an id switches mid-entry: the "salon half"
+        // of the person is born at the door). Count it as a boarding, but ONLY with arrival
+        // evidence — otherwise every pre-boarded passenger standing where the door polygon
+        // overlaps the salon gets a phantom +1:
+        //  * door contact happened at the START of the track (early samples), not just any brush;
+        //  * the head GREW from the early samples to the stable salon visit (came toward camera);
+        //  * the anchor really MOVED (standing people fail this).
+        if (boardings == 0 && alightings == 0 && visits.first().zone == DoorZoneSide.INSIDE) {
+            val earlyWindow = samples.take(minStableFrames.coerceAtLeast(2))
+            val originAtDoor = earlyWindow.any { it.inDoor || it.zone == DoorZoneSide.OUTSIDE }
+            if (originAtDoor) {
+                val insideVisit = visits.first { it.zone == DoorZoneSide.INSIDE }
+                val earlyHead = median(earlyWindow.map { it.headSize })
+                val early = earlyWindow.first()
+                val grew = ratio(earlyHead, insideVisit.medianHead) >= growRatio
+                val moved = hypot(insideVisit.anchorX - early.anchorX, insideVisit.anchorY - early.anchorY) >= minMovementPx
+                if (grew && moved) {
+                    boardings++
+                    reasons.append("born-at-door entry (grew + moved into salon); ")
+                } else {
+                    reasons.append("born-at-door rejected (grew=$grew, moved=$moved); ")
+                }
+            }
         }
 
         // "Left through the door but never re-confirmed OUTSIDE": the person walked from the salon
         // into the door/street edge and vanished without a stable OUTSIDE visit.
-        // Distinguished from "walked deep into the salon and sat" by: last confirmed side INSIDE,
-        // last samples at the exit, head shrinking, or real movement toward the exit.
+        // Requirements are conjunctive on purpose: the anchor must REALLY move toward the exit AND
+        // either shrink (walked away from camera) or end on the street side. A standing person
+        // whose box jitters (shrank-alone / moved-alone) must not qualify. And if this track has a
+        // stationary newborn successor at its death spot, the "death" is an id switch of a standing
+        // passenger — not an exit — so the whole branch is suppressed.
         val lastVisit = visits.last()
-        if (alightings == 0 && lastVisit.zone == DoorZoneSide.INSIDE && endAtExit) {
+        if (!suppressLostAtExit && alightings == 0 && lastVisit.zone == DoorZoneSide.INSIDE && endAtExit) {
             val insideVisit = visits.last { it.zone == DoorZoneSide.INSIDE }
             val tail = tailExitSample(samples)
             val shrank = ratio(insideVisit.medianHead, tail.headSize) <= shrinkRatio
             val moved = hypot(tail.anchorX - insideVisit.anchorX, tail.anchorY - insideVisit.anchorY) >= minMovementPx
-            if (tail.zone == DoorZoneSide.OUTSIDE || shrank || moved) {
+            // Sustained-travel guard: when a neighbour's box swallows a standing person, only the
+            // FINAL sample(s) jump toward the neighbour — all "movement" lives in one corrupt
+            // frame. A real exiter covers the distance over several frames, so the second-to-last
+            // sample is already well on its way toward the exit. Require that pre-final progress.
+            val preFinal = samples.getOrNull(samples.size - 2)
+            val sustained = preFinal != null &&
+                hypot(preFinal.anchorX - insideVisit.anchorX, preFinal.anchorY - insideVisit.anchorY) >= minMovementPx * 0.6f
+            if (moved && sustained && (shrank || tail.zone == DoorZoneSide.OUTSIDE)) {
                 alightings++
-                reasons.append("lost-at-exit exit (tail=${tail.zone}, shrank=$shrank, moved=$moved); ")
+                reasons.append("lost-at-exit exit (tail=${tail.zone}, shrank=$shrank, sustained=true); ")
+            } else if (moved && !sustained) {
+                reasons.append("lost-at-exit rejected: movement only in final sample (box-merge artifact); ")
             }
+        } else if (suppressLostAtExit && alightings == 0 && lastVisit.zone == DoorZoneSide.INSIDE && endAtExit) {
+            reasons.append("lost-at-exit suppressed: stationary newborn successor (id switch); ")
         }
 
         val fate = fateOf(boardings, alightings, visits, everInDoor)

@@ -43,13 +43,15 @@ ftp:
         y: 0.02
       - x: 0.32
         y: 0.02
-      - x: 0.38
-        y: 0.43
+      - x: 0.37
+        y: 0.42
       - x: 0.39
-        y: 0.84
-      - x: 0.79
-        y: 0.77
-      - x: 0.73
+        y: 0.80
+      - x: 0.80
+        y: 0.78
+      - x: 0.75
+        y: 0.38
+      - x: 0.76
         y: 0.02
       - x: 0.98
         y: 0.02
@@ -88,18 +90,19 @@ pc:
   models-dir: ./models
   videos-dir: ./videos
   min-frame-height: 480
-  detector: person
+  detector: head
   onnx-provider: cpu
   yolo-input-size: 416
   head-input-size: 640
   head-model-path: ./models/head-detector.onnx
   head-model-urls: ""
-  head-output-format: auto
+  head-output-format: xywh-score-class
   head-confidence-threshold: 0.35
   confidence-threshold: 0.35
   nms-iou-threshold: 0.5
   reid-similarity-threshold: 0.65
   reid-refresh-every-frames: 4
+  track-new-min-confidence: 0.45
   track-active-lost-frames: 45
   track-center-distance-threshold-px: 90
   track-center-size-multiplier: 2.6
@@ -110,8 +113,9 @@ pc:
   track-counted-reid-continuation-lost-frames: 20
   track-counted-reid-continuation-distance-px: 260
   track-counted-reid-similarity-threshold: 0.78
+  track-counted-head-continuation-distance-px: 65
   side-fallback-max-distance-px: 250
-  side-fallback-max-lost-frames: 8
+  side-fallback-max-lost-frames: 15
   count-duplicate-alighting-hold-frames: 18
   count-duplicate-alighting-distance-px: 85
   count-duplicate-alighting-reid-hold-frames: 60
@@ -128,10 +132,21 @@ pc:
   count-head-scale-shrink-ratio: 0.92
   count-scale-window: 5
   count-lost-at-door-frames: 3
+  count-min-body-height-ratio: 0.18
+  count-successor-max-gap-frames: 50
+  count-successor-max-distance-px: 120
   count-min-door-exit-visible-frames: 12
   count-min-stable-frames: 3
+  count-preboarded-exit-max-first-seen-frame: 90
+  head-body-width-multiplier: 2.8
+  head-body-height-multiplier: 5.5
+  native-head-max-width-ratio: 0.24
+  native-head-max-height-ratio: 0.38
+  native-head-max-area-ratio: 0.08
+  native-head-ignore-left-top-x: 0.30
+  native-head-ignore-left-top-y: 0.36
   head-tracking:
-    enabled: true
+    enabled: false
     height-ratio: 0.28
     width-ratio: 0.65
     min-size-px: 12

@@ -36,6 +36,32 @@ data class Detection(
         return x1 + width * ratio
     }
 
+    /**
+     * Inverse of [headRegion]: when the detector outputs NATIVE HEAD boxes, synthesize an
+     * approximate torso+head box for tracking and ReID. Tiny head boxes break IoU/center matching
+     * between processed frames and give OSNet garbage crops; an expanded body-like box is stable
+     * across frames and contains the clothing OSNet was trained on. Counting still uses the head.
+     */
+    fun syntheticBodyFromHead(
+        frameWidth: Int,
+        frameHeight: Int,
+        widthMultiplier: Float,
+        heightMultiplier: Float,
+    ): Detection {
+        val safeW = frameWidth.toFloat().coerceAtLeast(1f)
+        val safeH = frameHeight.toFloat().coerceAtLeast(1f)
+        val bodyWidth = width * widthMultiplier.coerceAtLeast(1f)
+        val bodyHeight = height * heightMultiplier.coerceAtLeast(1f)
+        val cx = centerX
+        return copy(
+            x1 = (cx - bodyWidth / 2f).coerceIn(0f, safeW),
+            y1 = y1.coerceIn(0f, safeH),
+            x2 = (cx + bodyWidth / 2f).coerceIn(0f, safeW),
+            y2 = (y1 + bodyHeight).coerceIn(0f, safeH),
+            body = null,
+        )
+    }
+
     fun headRegion(
         frameWidth: Int,
         frameHeight: Int,

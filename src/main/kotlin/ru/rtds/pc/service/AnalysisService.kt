@@ -40,6 +40,7 @@ class AnalysisService(
     @Value("\${pc.count-anchor-x-ratio:0.5}") private val countAnchorXRatio: Float,
     @Value("\${pc.count-anchor-y-ratio:0.95}") private val countAnchorYRatio: Float,
     @Value("\${pc.capacity:120}") private val capacity: Int,
+    @Value("\${pc.count-min-body-height-ratio:0.0}") private val countMinBodyHeightRatio: Float,
     @Value("\${pc.count-mode:offline}") private val countMode: String,
     @Value("\${pc.count-duplicate-alighting-hold-frames:18}") private val duplicateAlightingHoldFrames: Int,
     @Value("\${pc.count-duplicate-alighting-distance-px:85}") private val duplicateAlightingDistancePx: Float,
@@ -49,12 +50,20 @@ class AnalysisService(
     @Value("\${pc.head-tracking.height-ratio:0.28}") private val headTrackingHeightRatio: Float,
     @Value("\${pc.head-tracking.width-ratio:0.65}") private val headTrackingWidthRatio: Float,
     @Value("\${pc.head-tracking.min-size-px:12}") private val headTrackingMinSizePx: Float,
+    @Value("\${pc.head-body-width-multiplier:2.8}") private val headBodyWidthMultiplier: Float,
+    @Value("\${pc.head-body-height-multiplier:5.5}") private val headBodyHeightMultiplier: Float,
+    @Value("\${pc.native-head-max-width-ratio:0.24}") private val nativeHeadMaxWidthRatio: Float,
+    @Value("\${pc.native-head-max-height-ratio:0.38}") private val nativeHeadMaxHeightRatio: Float,
+    @Value("\${pc.native-head-max-area-ratio:0.08}") private val nativeHeadMaxAreaRatio: Float,
+    @Value("\${pc.native-head-ignore-left-top-x:0.30}") private val nativeHeadIgnoreLeftTopX: Float,
+    @Value("\${pc.native-head-ignore-left-top-y:0.36}") private val nativeHeadIgnoreLeftTopY: Float,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val initialOnboardWarmupFrames = 25
 
     private data class AlightingLock(
         val frameIndex: Int,
+        val trackId: Int,
         val anchorX: Float,
         val anchorY: Float,
         val headSize: Float,
@@ -93,9 +102,11 @@ class AnalysisService(
         val alightingLocks = mutableListOf<AlightingLock>()
         val suppressedAlightingTrackIds = mutableSetOf<Int>()
         log.info(
-            "Analysis started: session={}, file='{}', processEveryN={}, salonPoints={}, streetPoints={}, doorPoints={}",
+            "Analysis started: session={}, file='{}', detector={}, inputSize={}, processEveryN={}, salonPoints={}, streetPoints={}, doorPoints={}",
             session.id,
             session.sourcePath,
+            detector.id,
+            detector.inputSize,
             processEveryN,
             session.salonPolygon.size,
             session.streetPolygon.size,
@@ -132,11 +143,20 @@ class AnalysisService(
                         anchorX = ax,
                         anchorY = ay,
                         headSize = hypot(track.detection.width, track.detection.height),
+                        bodyHeightRatio = track.detection.bodyOrSelf.height / h.coerceAtLeast(1).toFloat(),
                     ),
                 )
             }
 
             for (track in tracks) {
+                // Far-silhouette guard for the LIVE counter: street pedestrians seen through the
+                // doorway are small in frame for their whole life; do not feed them into the
+                // streaming state machine at all. The offline classifier applies the same rule.
+                if (countMinBodyHeightRatio > 0f &&
+                    track.detection.bodyOrSelf.height < countMinBodyHeightRatio * h
+                ) {
+                    continue
+                }
                 val delta = crossingCounter.updateTrackState(
                     track,
                     countingZones,
@@ -253,7 +273,7 @@ class AnalysisService(
         expireAlightingLocks(alightingLocks, frameIdx)
 
         val duplicate = alightingLocks.any {
-            isDuplicateAlighting(anchorX, anchorY, headSize, track.embedding, frameIdx, it)
+            isDuplicateAlighting(track, anchorX, anchorY, headSize, track.embedding, frameIdx, it)
         }
         if (duplicate) {
             suppressedTrackIds += track.id
@@ -262,7 +282,7 @@ class AnalysisService(
             return 0
         }
 
-        alightingLocks += AlightingLock(frameIdx, anchorX, anchorY, headSize, track.embedding?.copyOf())
+        alightingLocks += AlightingLock(frameIdx, track.id, anchorX, anchorY, headSize, track.embedding?.copyOf())
         return delta.alightings
     }
 
@@ -285,6 +305,7 @@ class AnalysisService(
     }
 
     private fun isDuplicateAlighting(
+        track: TrackedPerson,
         anchorX: Float,
         anchorY: Float,
         headSize: Float,
@@ -298,6 +319,30 @@ class AnalysisService(
         val geometryHold = duplicateAlightingHoldFrames.coerceAtLeast(processEveryN.coerceAtLeast(1))
         if (age <= geometryHold && distance <= minOf(duplicateAlightingDistancePx, sizeLimit)) {
             return true
+        }
+
+        val firstSeen = track.firstSeenFrame
+        val firstAnchorX = track.firstAnchorX
+        val firstAnchorY = track.firstAnchorY
+        if (firstSeen != null &&
+            firstAnchorX != null &&
+            firstAnchorY != null &&
+            firstSeen >= lock.frameIndex &&
+            age <= geometryHold
+        ) {
+            val birthDistance = hypot(firstAnchorX - lock.anchorX, firstAnchorY - lock.anchorY)
+            val birthDistanceLimit = maxOf(duplicateAlightingDistancePx, sizeLimit * 1.75f)
+            if (birthDistance <= birthDistanceLimit) {
+                log.debug(
+                    "Duplicate alighting by newborn fragment: track={}, lockTrack={}, age={}, birthDistance={}, currentDistance={}",
+                    track.id,
+                    lock.trackId,
+                    age,
+                    "%.1f".format(birthDistance),
+                    "%.1f".format(distance),
+                )
+                return true
+            }
         }
 
         if (age > duplicateAlightingReidHoldFrames.coerceAtLeast(0)) return false
@@ -326,7 +371,16 @@ class AnalysisService(
         frameWidth: Int,
         frameHeight: Int,
     ): List<Detection> {
-        if (!headTrackingEnabled || detector.id.equals("head", ignoreCase = true)) {
+        // Native head detector: the detection IS the head. Attach a synthetic torso+head box so
+        // the tracker and ReID work on a large stable region instead of a tiny head (tiny boxes
+        // break IoU/center matching between processed frames and give OSNet garbage crops —
+        // that is exactly the id-churn/phantom chaos). Counting still uses the head box itself.
+        if (detector.id.equals("head", ignoreCase = true)) {
+            return detections
+                .map { nativeHeadDetection(it, frameWidth, frameHeight) }
+                .filterNot { isIgnoredNativeHeadRegion(it, frameWidth, frameHeight) }
+        }
+        if (!headTrackingEnabled) {
             return detections
         }
         return detections.map { person ->
@@ -338,6 +392,78 @@ class AnalysisService(
                 minSizePx = headTrackingMinSizePx,
             ).copy(body = person)
         }
+    }
+
+    private fun nativeHeadDetection(
+        detection: Detection,
+        frameWidth: Int,
+        frameHeight: Int,
+    ): Detection {
+        if (looksTooLargeForNativeHead(detection, frameWidth, frameHeight)) {
+            val head = detection.headRegion(
+                frameWidth = frameWidth,
+                frameHeight = frameHeight,
+                heightRatio = headTrackingHeightRatio,
+                widthRatio = headTrackingWidthRatio,
+                minSizePx = headTrackingMinSizePx,
+            )
+            return head.copy(body = detection)
+        }
+
+        return detection.copy(
+            body = detection.syntheticBodyFromHead(
+                frameWidth = frameWidth,
+                frameHeight = frameHeight,
+                widthMultiplier = headBodyWidthMultiplier,
+                heightMultiplier = headBodyHeightMultiplier,
+            ),
+        )
+    }
+
+    private fun looksTooLargeForNativeHead(detection: Detection, frameWidth: Int, frameHeight: Int): Boolean {
+        val safeW = frameWidth.toFloat().coerceAtLeast(1f)
+        val safeH = frameHeight.toFloat().coerceAtLeast(1f)
+        val widthRatio = detection.width / safeW
+        val heightRatio = detection.height / safeH
+        val areaRatio = detection.width * detection.height / (safeW * safeH)
+        return widthRatio > nativeHeadMaxWidthRatio ||
+            heightRatio > nativeHeadMaxHeightRatio ||
+            areaRatio > nativeHeadMaxAreaRatio
+    }
+
+    private fun isIgnoredNativeHeadRegion(detection: Detection, frameWidth: Int, frameHeight: Int): Boolean {
+        val maxX = nativeHeadIgnoreLeftTopX.coerceIn(0f, 1f)
+        val maxY = nativeHeadIgnoreLeftTopY.coerceIn(0f, 1f)
+        if (maxX <= 0f || maxY <= 0f) return false
+
+        val safeW = frameWidth.toFloat().coerceAtLeast(1f)
+        val safeH = frameHeight.toFloat().coerceAtLeast(1f)
+        val ignoreRight = safeW * maxX
+        val ignoreBottom = safeH * maxY
+        val centerInside = detection.centerX <= ignoreRight && detection.centerY <= ignoreBottom
+
+        val ix1 = maxOf(detection.x1, 0f)
+        val iy1 = maxOf(detection.y1, 0f)
+        val ix2 = minOf(detection.x2, ignoreRight)
+        val iy2 = minOf(detection.y2, ignoreBottom)
+        val intersection = if (ix2 > ix1 && iy2 > iy1) (ix2 - ix1) * (iy2 - iy1) else 0f
+        val area = (detection.width * detection.height).coerceAtLeast(1f)
+        val mostlyInsideMask = intersection / area >= 0.35f
+
+        val ignored = centerInside || mostlyInsideMask
+        if (ignored && log.isDebugEnabled) {
+            log.debug(
+                "Ignored native head in left-top mask: box=[{},{},{},{}], centerRatio=({},{}), overlapRatio={}",
+                "%.1f".format(detection.x1),
+                "%.1f".format(detection.y1),
+                "%.1f".format(detection.x2),
+                "%.1f".format(detection.y2),
+                "%.2f".format(detection.centerX / safeW),
+                "%.2f".format(detection.centerY / safeH),
+                "%.2f".format(intersection / area),
+            )
+        }
+        return ignored
     }
 
     private fun buildZones(session: AnalysisSession, frameWidth: Int, frameHeight: Int): CountingZones =

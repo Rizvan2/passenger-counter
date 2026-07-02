@@ -62,4 +62,24 @@ class DetectionTest {
         // a plain detection with no body tracks on itself
         assertEquals(person, person.bodyOrSelf)
     }
+
+    @Test
+    fun `synthetic body expands a native head box down and wide`() {
+        val head = Detection(x1 = 300f, y1 = 100f, x2 = 340f, y2 = 140f, confidence = 0.8f)
+        val body = head.syntheticBodyFromHead(
+            frameWidth = 1280,
+            frameHeight = 720,
+            widthMultiplier = 2.8f,
+            heightMultiplier = 5.5f,
+        )
+        // centered on the head, top preserved, expanded 2.8x wide and 5.5x tall, clamped in frame
+        assertEquals(320f - 56f, body.x1)
+        assertEquals(100f, body.y1)
+        assertEquals(320f + 56f, body.x2)
+        assertEquals(100f + 220f, body.y2)
+        // and when attached, tracking uses the body while counting uses the head
+        val tracked = head.copy(body = body)
+        assertEquals(body, tracked.bodyOrSelf)
+        assertEquals(head.centerX, tracked.centerX)
+    }
 }

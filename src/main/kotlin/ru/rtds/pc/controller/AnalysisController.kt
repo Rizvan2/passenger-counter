@@ -42,10 +42,20 @@ class AnalysisController(
         )
         val (salonPolygon, streetPolygon, fallbackDoorPolygon) = if (req.hasExplicitPolygons()) {
             Triple(req.resolvedSalonPolygon(), req.resolvedStreetPolygon(), legacyPolygons.third)
+        } else if (ftpProperties.analysis.hasExplicitPolygons()) {
+            Triple(
+                ftpProperties.analysis.resolvedSalonPolygon(),
+                ftpProperties.analysis.resolvedStreetPolygon(),
+                legacyPolygons.third,
+            )
         } else {
             legacyPolygons
         }
-        val doorPolygon = if (req.hasExplicitDoorPolygon()) req.resolvedDoorPolygon() else fallbackDoorPolygon
+        val doorPolygon = when {
+            req.hasExplicitDoorPolygon() -> req.resolvedDoorPolygon()
+            ftpProperties.analysis.hasExplicitDoorPolygon() -> ftpProperties.analysis.resolvedDoorPolygon()
+            else -> fallbackDoorPolygon
+        }
         val s = sessionManager.create(
             videoPath = req.videoPath,
             salonPolygon = salonPolygon,

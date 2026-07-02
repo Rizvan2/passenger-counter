@@ -16,6 +16,13 @@ data class TrajectorySample(
     val anchorY: Float,
     /** Scale proxy: hypot(boxWidth, boxHeight). For a head box this is head size. */
     val headSize: Float,
+    /**
+     * Height of the full person (body) box as a fraction of frame height. Far-away street
+     * pedestrians seen through the doorway stay small for their whole track; a track whose
+     * body never exceeds a threshold ratio is classified as a passer-by and never counted.
+     * Defaults to 1 (fully visible) so synthetic samples in tests behave as близкие люди.
+     */
+    val bodyHeightRatio: Float = 1f,
 )
 
 /** Full time-series of one track id across the whole clip. */

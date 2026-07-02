@@ -81,6 +81,7 @@ class HeadDetectorService(
     @PreDestroy
     fun cleanup() {
         if (::session.isInitialized) session.close()
+        if (::env.isInitialized) env.close()
     }
 
     override fun detect(letterboxed: FloatArray, origWidth: Int, origHeight: Int): List<Detection> {
@@ -124,43 +125,42 @@ class HeadDetectorService(
 
     private fun parseYoloPlanes(planes: List<FloatArray>, origWidth: Int, origHeight: Int): List<Detection> {
         val n = planes[0].size
-        val gain = minOf(inputSize.toFloat() / origWidth, inputSize.toFloat() / origHeight)
-        val padX = (inputSize - origWidth * gain) / 2f
-        val padY = (inputSize - origHeight * gain) / 2f
         val detections = mutableListOf<Detection>()
 
         for (i in 0 until n) {
-            val score = planes[4][i]
+            val score = scoreAt(planes, i)
             if (score < confThreshold) continue
 
             val cx = planes[0][i]
             val cy = planes[1][i]
             val w = planes[2][i]
             val h = planes[3][i]
-            val x1 = (cx - w / 2f - padX) / gain
-            val y1 = (cy - h / 2f - padY) / gain
-            val x2 = (cx + w / 2f - padX) / gain
-            val y2 = (cy + h / 2f - padY) / gain
-
-            detections.add(
-                Detection(
-                    x1 = x1.coerceIn(0f, origWidth.toFloat()),
-                    y1 = y1.coerceIn(0f, origHeight.toFloat()),
-                    x2 = x2.coerceIn(0f, origWidth.toFloat()),
-                    y2 = y2.coerceIn(0f, origHeight.toFloat()),
-                    confidence = score,
-                )
-            )
+            letterboxXywhToDetection(cx, cy, w, h, score, origWidth, origHeight)?.let { detections += it }
         }
 
         return detections
     }
 
+    private fun scoreAt(planes: List<FloatArray>, index: Int): Float {
+        if (planes.size <= 5) return planes[4][index]
+        var best = planes[4][index]
+        for (plane in 5 until planes.size) {
+            if (planes[plane][index] > best) best = planes[plane][index]
+        }
+        return best
+    }
+
     private fun parseRow(row: FloatArray, origWidth: Int, origHeight: Int): Detection? {
-        if (row.size < 6) return null
+        if (row.size < 5) return null
         val parsed = when (outputFormat.lowercase()) {
-            "batch-class-xyxy" -> rowToDetection(row[2], row[3], row[4], row[5], 1f, origWidth, origHeight)
-            "xyxy-score-class" -> rowToDetection(row[0], row[1], row[2], row[3], row[4], origWidth, origHeight)
+            "batch-class-xyxy" -> if (row.size >= 6) {
+                letterboxXyxyToDetection(row[2], row[3], row[4], row[5], 1f, origWidth, origHeight)
+            } else {
+                null
+            }
+            "xyxy-score-class" -> letterboxXyxyToDetection(row[0], row[1], row[2], row[3], row[4], origWidth, origHeight)
+            "xywh-score-class", "cxcywh-score-class" ->
+                letterboxXywhToDetection(row[0], row[1], row[2], row[3], row[4], origWidth, origHeight)
             else -> parseAuto(row, origWidth, origHeight)
         } ?: return null
         return parsed.takeIf { it.confidence >= confThreshold && it.width >= 2f && it.height >= 2f }
@@ -168,14 +168,62 @@ class HeadDetectorService(
 
     private fun parseAuto(row: FloatArray, origWidth: Int, origHeight: Int): Detection? {
         val looksBatchClass = row[0].isNearInteger() && row[1].isNearInteger() && row[4] > row[2] && row[5] > row[3]
-        return if (looksBatchClass) {
-            rowToDetection(row[2], row[3], row[4], row[5], 1f, origWidth, origHeight)
-        } else {
-            rowToDetection(row[0], row[1], row[2], row[3], row[4], origWidth, origHeight)
+        if (looksBatchClass) {
+            return letterboxXyxyToDetection(row[2], row[3], row[4], row[5], 1f, origWidth, origHeight)
+        }
+
+        val score = row.getOrNull(4) ?: return null
+        val xywh = letterboxXywhToDetection(row[0], row[1], row[2], row[3], score, origWidth, origHeight)
+        val xyxy = letterboxXyxyToDetection(row[0], row[1], row[2], row[3], score, origWidth, origHeight)
+        return when {
+            xywh == null -> xyxy
+            xyxy == null -> xywh
+            looksMoreLikeHead(xywh, xyxy, origWidth, origHeight) -> xywh
+            else -> xyxy
         }
     }
 
-    private fun rowToDetection(
+    private fun looksMoreLikeHead(xywh: Detection, xyxy: Detection, origWidth: Int, origHeight: Int): Boolean {
+        val frameArea = origWidth.toFloat() * origHeight.toFloat()
+        val xywhAreaRatio = xywh.width * xywh.height / frameArea
+        val xyxyAreaRatio = xyxy.width * xyxy.height / frameArea
+        if (xyxyAreaRatio > 0.18f && xywhAreaRatio < xyxyAreaRatio) return true
+        if (xywhAreaRatio > 0.18f && xyxyAreaRatio < xywhAreaRatio) return false
+
+        val xywhAspect = xywh.width / xywh.height.coerceAtLeast(1f)
+        val xyxyAspect = xyxy.width / xyxy.height.coerceAtLeast(1f)
+        val xywhHeadLike = xywhAspect in 0.45f..1.8f
+        val xyxyHeadLike = xyxyAspect in 0.45f..1.8f
+        return xywhHeadLike && !xyxyHeadLike
+    }
+
+    private fun letterboxXywhToDetection(
+        rawCx: Float,
+        rawCy: Float,
+        rawW: Float,
+        rawH: Float,
+        score: Float,
+        origWidth: Int,
+        origHeight: Int,
+    ): Detection? {
+        val normalized = listOf(rawCx, rawCy, rawW, rawH).all { it in -0.05f..1.5f }
+        val scale = if (normalized) inputSize.toFloat() else 1f
+        val cx = rawCx * scale
+        val cy = rawCy * scale
+        val w = rawW * scale
+        val h = rawH * scale
+        return letterboxXyxyToDetection(
+            cx - w / 2f,
+            cy - h / 2f,
+            cx + w / 2f,
+            cy + h / 2f,
+            score,
+            origWidth,
+            origHeight,
+        )
+    }
+
+    private fun letterboxXyxyToDetection(
         rawX1: Float,
         rawY1: Float,
         rawX2: Float,
@@ -185,13 +233,15 @@ class HeadDetectorService(
         origHeight: Int,
     ): Detection? {
         val normalized = listOf(rawX1, rawY1, rawX2, rawY2).all { it in -0.05f..1.5f }
-        val scaleX = if (normalized) origWidth.toFloat() else 1f
-        val scaleY = if (normalized) origHeight.toFloat() else 1f
+        val scale = if (normalized) inputSize.toFloat() else 1f
+        val gain = minOf(inputSize.toFloat() / origWidth, inputSize.toFloat() / origHeight)
+        val padX = (inputSize - origWidth * gain) / 2f
+        val padY = (inputSize - origHeight * gain) / 2f
 
-        val x1 = rawX1 * scaleX
-        val y1 = rawY1 * scaleY
-        val x2 = rawX2 * scaleX
-        val y2 = rawY2 * scaleY
+        val x1 = (rawX1 * scale - padX) / gain
+        val y1 = (rawY1 * scale - padY) / gain
+        val x2 = (rawX2 * scale - padX) / gain
+        val y2 = (rawY2 * scale - padY) / gain
         if (x2 <= x1 || y2 <= y1) return null
 
         return Detection(

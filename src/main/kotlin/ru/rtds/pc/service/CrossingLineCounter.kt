@@ -28,6 +28,8 @@ class CrossingLineCounter(
     @Value("\${pc.count-lost-at-door-frames:3}") private val lostAtDoorFrames: Int,
     @Value("\${pc.count-min-door-exit-visible-frames:12}") private val minDoorExitVisibleFrames: Int,
     @Value("\${pc.count-min-stable-frames:3}") private val minStableFrames: Int,
+    @Value("\${pc.count-preboarded-exit-max-first-seen-frame:90}") private val preboardedExitMaxFirstSeenFrame: Int,
+    @Value("\${pc.process-every-n-frames:1}") private val processEveryNFrames: Int,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -119,13 +121,15 @@ class CrossingLineCounter(
             return cancelBoarding(track, frameIndex)
         }
         if (track.isAlighted) return CountDelta(0, 0)
-        val canExitWithoutStableInside = allowPreboardedExit && track.wasInDoor
-        if (!wasStableInside(track) && !canExitWithoutStableInside) return CountDelta(0, 0)
+        val wasInside = wasStableInside(track)
+        val canExitWithoutStableInside = canExitWithoutStableInside(track, allowPreboardedExit)
+        if (!wasInside && !canExitWithoutStableInside) return CountDelta(0, 0)
         if (track.framesSinceUpdate < lostAtDoorFrames) return CountDelta(0, 0)
 
         val lastSeenOutside = track.lastSeenZone == DoorZoneSide.OUTSIDE
         val lastSeenAtDoor = visitedDoorRecently(track, frameIndex)
         if (!lastSeenOutside && !lastSeenAtDoor) return CountDelta(0, 0)
+        if (!wasInside && !lastSeenOutside) return CountDelta(0, 0)
 
         val moved = movedEnough(
             track.stableAnchorX,
@@ -221,7 +225,7 @@ class CrossingLineCounter(
         if (track.firstStableZone == null) {
             track.firstStableZone = currentZone
             track.firstStableHeadSize = smoothedHeadSize
-            track.bornInDoor = track.isInDoor || currentZone == DoorZoneSide.OUTSIDE
+            track.bornInDoor = currentZone == DoorZoneSide.OUTSIDE
         }
         track.lastStableHeadSize = smoothedHeadSize
         return true
@@ -239,22 +243,22 @@ class CrossingLineCounter(
             return cancelAlighting(track, frameIndex)
         }
 
-        val originOutside = track.firstStableZone == DoorZoneSide.OUTSIDE || track.bornInDoor
+        val originOutside = track.firstStableZone == DoorZoneSide.OUTSIDE
         if (!originOutside) {
             track.countState = TrackCountState.INSIDE
             return CountDelta(0, 0)
         }
 
-        if (previousStableZone != DoorZoneSide.OUTSIDE && !track.bornInDoor) {
+        if (previousStableZone != DoorZoneSide.OUTSIDE) {
             track.countState = TrackCountState.INSIDE
             return CountDelta(0, 0)
         }
 
-        if (!track.bornInDoor && !movedEnough(previousStableAnchorX, previousStableAnchorY, track.detection.anchorX(countAnchorXRatio), track.detection.anchorY(countAnchorYRatio))) {
+        if (!movedEnough(previousStableAnchorX, previousStableAnchorY, track.detection.anchorX(countAnchorXRatio), track.detection.anchorY(countAnchorYRatio))) {
             track.countState = TrackCountState.INSIDE
             return CountDelta(0, 0)
         }
-        if (!track.bornInDoor && !headGrew(track, previousStableHeadSize)) {
+        if (!headGrew(track, previousStableHeadSize)) {
             track.countState = TrackCountState.INSIDE
             return CountDelta(0, 0)
         }
@@ -277,7 +281,7 @@ class CrossingLineCounter(
             return cancelBoarding(track, frameIndex)
         }
 
-        val canExitWithoutStableInside = allowPreboardedExit && track.wasInDoor
+        val canExitWithoutStableInside = canExitWithoutStableInside(track, allowPreboardedExit)
         val wasInside = wasStableInside(track)
         if (!wasStableInside(track) && !canExitWithoutStableInside) {
             track.countState = TrackCountState.OUTSIDE
@@ -319,9 +323,16 @@ class CrossingLineCounter(
     private fun wasStableInside(track: TrackedPerson): Boolean =
         track.firstStableZone == DoorZoneSide.INSIDE || track.stableZone == DoorZoneSide.INSIDE || track.countState == TrackCountState.INSIDE
 
+    private fun canExitWithoutStableInside(track: TrackedPerson, allowPreboardedExit: Boolean): Boolean {
+        if (!allowPreboardedExit || !track.wasInDoor) return false
+        val firstSeen = track.firstSeenFrame ?: return false
+        return firstSeen <= preboardedExitMaxFirstSeenFrame.coerceAtLeast(0)
+    }
+
     private fun visitedDoorRecently(track: TrackedPerson, frameIndex: Int): Boolean {
         val seenAt = track.lastReliableInDoorFrame ?: return false
-        return frameIndex - seenAt <= lostAtDoorFrames + 2
+        val rawFrameWindow = (lostAtDoorFrames + 2) * processEveryNFrames.coerceAtLeast(1)
+        return frameIndex - seenAt <= rawFrameWindow
     }
 
     private fun movedEnough(startX: Float?, startY: Float?, anchorX: Float, anchorY: Float): Boolean =

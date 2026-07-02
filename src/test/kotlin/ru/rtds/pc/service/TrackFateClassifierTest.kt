@@ -14,7 +14,116 @@ class TrackFateClassifierTest {
         shrinkRatio = 0.92f,
         minMovementPx = 40f,
         lostAtDoorFrames = 3,
+        minBodyHeightRatio = 0.18f,
+        successorMaxGapFrames = 15,
+        successorMaxDistancePx = 120f,
     )
+
+    @Test
+    fun `standing passenger whose id switches is not a phantom exit`() {
+        // Track A: stands in the salon where the door polygon overlaps; near death the box
+        // jitters (shrinks a bit and drifts 45px) — previously this looked like an exit.
+        val a = track(
+            30,
+            sample(0, DoorZoneSide.INSIDE, false, 500f, 320f, 50f),
+            sample(1, DoorZoneSide.INSIDE, false, 500f, 321f, 50f),
+            sample(2, DoorZoneSide.INSIDE, false, 501f, 320f, 50f),
+            sample(3, DoorZoneSide.INSIDE, true, 520f, 300f, 44f),
+            sample(4, DoorZoneSide.INSIDE, true, 540f, 290f, 40f),
+        )
+        // Track B: born 3 frames after A's death at the same spot, standing still -> id switch.
+        val b = track(
+            31,
+            sample(7, DoorZoneSide.INSIDE, false, 505f, 318f, 50f),
+            sample(8, DoorZoneSide.INSIDE, false, 506f, 319f, 50f),
+            sample(9, DoorZoneSide.INSIDE, false, 505f, 318f, 51f),
+            sample(10, DoorZoneSide.INSIDE, false, 506f, 318f, 50f),
+        )
+        val result = classifier.classify(listOf(a, b))
+        assertEquals(0, result.boardings)
+        assertEquals(0, result.alightings)
+    }
+
+    @Test
+    fun `two exiters merging into one track still count as two exits`() {
+        // A and B coexist from the start (so neither is a newborn successor of the other).
+        // A walks to the door shrinking and dies mid-way (merged into B); B completes the exit.
+        val a = track(
+            32,
+            sample(0, DoorZoneSide.INSIDE, false, 400f, 320f, 52f),
+            sample(1, DoorZoneSide.INSIDE, false, 400f, 318f, 52f),
+            sample(2, DoorZoneSide.INSIDE, false, 401f, 319f, 52f),
+            sample(3, DoorZoneSide.BUFFER, true, 390f, 260f, 44f),
+            sample(4, DoorZoneSide.BUFFER, true, 385f, 220f, 40f),
+        )
+        val b = track(
+            33,
+            sample(0, DoorZoneSide.INSIDE, false, 430f, 330f, 50f),
+            sample(1, DoorZoneSide.INSIDE, false, 429f, 328f, 50f),
+            sample(2, DoorZoneSide.INSIDE, false, 430f, 329f, 50f),
+            sample(4, DoorZoneSide.BUFFER, true, 420f, 250f, 42f),
+            sample(5, DoorZoneSide.OUTSIDE, false, 415f, 180f, 34f),
+            sample(6, DoorZoneSide.OUTSIDE, false, 414f, 178f, 33f),
+            sample(7, DoorZoneSide.OUTSIDE, false, 415f, 177f, 33f),
+        )
+        val result = classifier.classify(listOf(a, b))
+        assertEquals(0, result.boardings)
+        assertEquals(2, result.alightings)
+    }
+
+    @Test
+    fun `far small silhouette is a passer-by and never counted`() {
+        // A pedestrian seen through the doorway: drifts across zones, but body stays tiny.
+        val t = track(
+            20,
+            sample(0, DoorZoneSide.OUTSIDE, false, 350f, 150f, 20f, body = 0.10f),
+            sample(1, DoorZoneSide.OUTSIDE, false, 360f, 150f, 20f, body = 0.11f),
+            sample(2, DoorZoneSide.OUTSIDE, false, 370f, 150f, 21f, body = 0.10f),
+            sample(3, DoorZoneSide.BUFFER, true, 380f, 160f, 22f, body = 0.12f),
+            sample(4, DoorZoneSide.INSIDE, false, 390f, 170f, 22f, body = 0.11f),
+            sample(5, DoorZoneSide.INSIDE, false, 400f, 175f, 23f, body = 0.12f),
+            sample(6, DoorZoneSide.INSIDE, false, 410f, 178f, 23f, body = 0.11f),
+        )
+        val result = classifier.classify(listOf(t))
+        assertEquals(0, result.boardings)
+        assertEquals(0, result.alightings)
+        assertEquals(TrackFate.PASSERBY, result.perTrack.single().fate)
+    }
+
+    @Test
+    fun `track born at door that grows into salon is one boarding`() {
+        // Id switched mid-entry: this "salon half" has no stable OUTSIDE visit at all.
+        val t = track(
+            21,
+            sample(0, DoorZoneSide.BUFFER, true, 350f, 200f, 30f),
+            sample(1, DoorZoneSide.BUFFER, true, 352f, 230f, 34f),
+            sample(2, DoorZoneSide.INSIDE, false, 356f, 280f, 44f),
+            sample(3, DoorZoneSide.INSIDE, false, 360f, 300f, 48f),
+            sample(4, DoorZoneSide.INSIDE, false, 362f, 305f, 50f),
+            sample(5, DoorZoneSide.INSIDE, false, 363f, 306f, 51f),
+        )
+        val result = classifier.classify(listOf(t))
+        assertEquals(1, result.boardings)
+        assertEquals(0, result.alightings)
+    }
+
+    @Test
+    fun `standing passenger brushing the door polygon is not a boarding`() {
+        // Pre-boarded person standing where the door polygon overlaps the salon: door contact,
+        // but no growth and no movement -> must NOT be counted as an entry.
+        val t = track(
+            22,
+            sample(0, DoorZoneSide.BUFFER, true, 500f, 320f, 50f),
+            sample(1, DoorZoneSide.INSIDE, false, 501f, 321f, 50f),
+            sample(2, DoorZoneSide.INSIDE, false, 500f, 320f, 51f),
+            sample(3, DoorZoneSide.INSIDE, false, 502f, 322f, 50f),
+            sample(4, DoorZoneSide.INSIDE, true, 501f, 321f, 50f),
+            sample(5, DoorZoneSide.INSIDE, false, 500f, 320f, 50f),
+        )
+        val result = classifier.classify(listOf(t))
+        assertEquals(0, result.boardings)
+        assertEquals(0, result.alightings)
+    }
 
     @Test
     fun `street to salon with door and growth is one boarding`() {
@@ -143,12 +252,40 @@ class TrackFateClassifierTest {
         assertEquals(1, result.alightings)
     }
 
+    @Test
+    fun `standing passenger absorbed by a neighbour box is not an exit`() {
+        // Stands still the whole track; the FINAL sample jumps toward the neighbour who swallowed
+        // his box (merge artifact): big displacement + shrink, in the door-overlap area. There is
+        // no newborn successor (the neighbour's track existed before). Must NOT count as exit.
+        val a = track(
+            40,
+            sample(0, DoorZoneSide.INSIDE, false, 500f, 320f, 50f),
+            sample(1, DoorZoneSide.INSIDE, false, 500f, 321f, 50f),
+            sample(2, DoorZoneSide.INSIDE, false, 501f, 320f, 50f),
+            sample(3, DoorZoneSide.INSIDE, false, 500f, 320f, 51f),
+            sample(4, DoorZoneSide.INSIDE, true, 430f, 260f, 40f),
+        )
+        // Neighbour who passed by and absorbed him — coexisted from the start.
+        val b = track(
+            41,
+            sample(0, DoorZoneSide.INSIDE, false, 470f, 340f, 52f),
+            sample(1, DoorZoneSide.INSIDE, false, 460f, 330f, 52f),
+            sample(2, DoorZoneSide.INSIDE, false, 452f, 322f, 52f),
+            sample(3, DoorZoneSide.INSIDE, false, 445f, 315f, 53f),
+            sample(4, DoorZoneSide.INSIDE, false, 440f, 310f, 53f),
+            sample(5, DoorZoneSide.INSIDE, false, 438f, 308f, 53f),
+        )
+        val result = classifier.classify(listOf(a, b))
+        assertEquals(0, result.boardings)
+        assertEquals(0, result.alightings)
+    }
+
     private fun track(id: Int, vararg samples: TrajectorySample): TrackTrajectory {
         val t = TrackTrajectory(id)
         samples.forEach { t.add(it) }
         return t
     }
 
-    private fun sample(frame: Int, zone: DoorZoneSide, inDoor: Boolean, x: Float, y: Float, head: Float) =
-        TrajectorySample(frameIndex = frame, zone = zone, inDoor = inDoor, anchorX = x, anchorY = y, headSize = head)
+    private fun sample(frame: Int, zone: DoorZoneSide, inDoor: Boolean, x: Float, y: Float, head: Float, body: Float = 1f) =
+        TrajectorySample(frameIndex = frame, zone = zone, inDoor = inDoor, anchorX = x, anchorY = y, headSize = head, bodyHeightRatio = body)
 }
