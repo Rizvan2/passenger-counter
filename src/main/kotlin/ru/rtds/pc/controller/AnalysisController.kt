@@ -56,11 +56,17 @@ class AnalysisController(
             ftpProperties.analysis.hasExplicitDoorPolygon() -> ftpProperties.analysis.resolvedDoorPolygon()
             else -> fallbackDoorPolygon
         }
+        val salonSpawnPolygon = when {
+            req.hasExplicitSalonSpawnPolygon() -> req.resolvedSalonSpawnPolygon()
+            ftpProperties.analysis.hasExplicitSalonSpawnPolygon() -> ftpProperties.analysis.resolvedSalonSpawnPolygon()
+            else -> emptyList()
+        }
         val s = sessionManager.create(
             videoPath = req.videoPath,
             salonPolygon = salonPolygon,
             streetPolygon = streetPolygon,
             doorPolygon = doorPolygon,
+            salonSpawnPolygon = salonSpawnPolygon,
             lineAxRatio = legacyLineAx,
             lineAyRatio = legacyLineAy,
             lineBxRatio = legacyLineBx,
@@ -124,6 +130,7 @@ class AnalysisController(
             "defaultSalonPolygon" to ftpProperties.analysis.resolvedSalonPolygon().map { mapOf("x" to it.x, "y" to it.y) },
             "defaultStreetPolygon" to ftpProperties.analysis.resolvedStreetPolygon().map { mapOf("x" to it.x, "y" to it.y) },
             "defaultDoorPolygon" to doorPolygon.map { mapOf("x" to it.x, "y" to it.y) },
+            "defaultSalonSpawnPolygon" to ftpProperties.analysis.resolvedSalonSpawnPolygon().map { mapOf("x" to it.x, "y" to it.y) },
         )
     }
 }

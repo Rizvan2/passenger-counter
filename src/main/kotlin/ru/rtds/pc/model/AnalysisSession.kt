@@ -9,6 +9,7 @@ class AnalysisSession(
     val salonPolygon: List<NormalizedPoint>,
     val streetPolygon: List<NormalizedPoint>,
     val doorPolygon: List<NormalizedPoint>,
+    val salonSpawnPolygon: List<NormalizedPoint> = emptyList(),
     val lineAxRatio: Float = 0f,
     val lineAyRatio: Float = 0.5f,
     val lineBxRatio: Float = 1f,
@@ -32,6 +33,8 @@ class AnalysisSession(
     @Volatile var initialOnboardDetected: Boolean = !autoInitialOnboard
     @Volatile var initialOnboardFrames: Int = 0
     @Volatile var initialOnboardCandidate: Int = initialOnboard
+    @Volatile var countingPrescanDone: Boolean = false
+    @Volatile var countingPrescanFrames: Int = 0
     @Volatile var visibleDetections: Int = 0
     @Volatile var insideDetections: Int = 0
     @Volatile var bufferDetections: Int = 0

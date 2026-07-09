@@ -10,12 +10,14 @@ data class CountingZones(
     val salonPolygonRatio: List<NormalizedPoint>,
     val streetPolygonRatio: List<NormalizedPoint>,
     val doorPolygonRatio: List<NormalizedPoint>,
+    val salonSpawnPolygonRatio: List<NormalizedPoint>,
     val frameWidth: Int,
     val frameHeight: Int,
 ) {
     val salonPolygonPx: List<LinePointDto> = salonPolygonRatio.map { it.toPixel(frameWidth, frameHeight) }
     val streetPolygonPx: List<LinePointDto> = streetPolygonRatio.map { it.toPixel(frameWidth, frameHeight) }
     val doorPolygonPx: List<LinePointDto> = doorPolygonRatio.map { it.toPixel(frameWidth, frameHeight) }
+    val salonSpawnPolygonPx: List<LinePointDto> = salonSpawnPolygonRatio.map { it.toPixel(frameWidth, frameHeight) }
 
     fun zoneFor(anchorX: Float, anchorY: Float): DoorZoneSide {
         val inSalon = pointInPolygon(anchorX, anchorY, salonPolygonPx)
@@ -34,6 +36,12 @@ data class CountingZones(
     fun pointInSalon(detection: Detection, anchorXRatio: Float, anchorYRatio: Float): Boolean =
         pointInPolygon(detection.anchorX(anchorXRatio), detection.anchorY(anchorYRatio), salonPolygonPx)
 
+    fun pointInSalonSpawn(anchorX: Float, anchorY: Float): Boolean =
+        pointInPolygon(anchorX, anchorY, salonSpawnPolygonPx)
+
+    fun pointInSalonSpawn(detection: Detection, anchorXRatio: Float, anchorYRatio: Float): Boolean =
+        pointInSalonSpawn(detection.anchorX(anchorXRatio), detection.anchorY(anchorYRatio))
+
     fun inDoor(anchorX: Float, anchorY: Float): Boolean =
         pointInPolygon(anchorX, anchorY, doorPolygonPx)
 
@@ -48,12 +56,14 @@ data class CountingZones(
             salonPolygonRatio: List<NormalizedPoint>,
             streetPolygonRatio: List<NormalizedPoint>,
             doorPolygonRatio: List<NormalizedPoint>,
+            salonSpawnPolygonRatio: List<NormalizedPoint> = emptyList(),
             frameWidth: Int,
             frameHeight: Int,
         ): CountingZones = CountingZones(
             salonPolygonRatio = sanitize(salonPolygonRatio),
             streetPolygonRatio = sanitize(streetPolygonRatio),
             doorPolygonRatio = sanitize(doorPolygonRatio),
+            salonSpawnPolygonRatio = sanitize(salonSpawnPolygonRatio),
             frameWidth = frameWidth,
             frameHeight = frameHeight,
         )
@@ -103,6 +113,7 @@ data class CountingZones(
                         y = (it.y / frameHeight).coerceIn(0f, 1f),
                     )
                 },
+                salonSpawnPolygonRatio = emptyList(),
                 frameWidth = frameWidth,
                 frameHeight = frameHeight,
             )

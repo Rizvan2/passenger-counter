@@ -23,11 +23,13 @@ data class TrajectorySample(
      * Defaults to 1 (fully visible) so synthetic samples in tests behave as близкие люди.
      */
     val bodyHeightRatio: Float = 1f,
+    val inSalonSpawn: Boolean = false,
 )
 
 /** Full time-series of one track id across the whole clip. */
 class TrackTrajectory(val trackId: Int) {
     val samples: MutableList<TrajectorySample> = ArrayList()
+    var exitCountingOrigin: ExitCountingOrigin = ExitCountingOrigin.UNKNOWN
 
     fun add(sample: TrajectorySample) {
         samples.add(sample)
@@ -43,6 +45,15 @@ class TrackTrajectoryStore {
 
     fun record(trackId: Int, sample: TrajectorySample) {
         byTrack.getOrPut(trackId) { TrackTrajectory(trackId) }.add(sample)
+    }
+
+    fun markOrigin(trackId: Int, origin: ExitCountingOrigin) {
+        val trajectory = byTrack.getOrPut(trackId) { TrackTrajectory(trackId) }
+        if (trajectory.exitCountingOrigin == ExitCountingOrigin.UNKNOWN ||
+            trajectory.exitCountingOrigin == ExitCountingOrigin.INVALID
+        ) {
+            trajectory.exitCountingOrigin = origin
+        }
     }
 
     fun trajectories(): Collection<TrackTrajectory> = byTrack.values

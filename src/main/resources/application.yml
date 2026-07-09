@@ -81,6 +81,19 @@ ftp:
         y: 0.80
       - x: 0.37
         y: 0.42
+    salon-spawn-polygon:
+      - x: 0.90
+        y: 0.03
+      - x: 0.98
+        y: 0.03
+      - x: 0.98
+        y: 0.98
+      - x: 0.35
+        y: 0.98
+      - x: 0.35
+        y: 0.82
+      - x: 0.90
+        y: 0.82
     inside-on-positive-side: true
     inside-on-top: false
     auto-initial-onboard: true
@@ -97,23 +110,16 @@ pc:
   head-model-path: ./models/head-detector.onnx
   head-model-urls: ""
   head-output-format: xywh-score-class
-  head-confidence-threshold: 0.35
+  head-confidence-threshold: 0.25
   confidence-threshold: 0.35
   nms-iou-threshold: 0.5
   reid-similarity-threshold: 0.65
   reid-refresh-every-frames: 4
-  track-new-min-confidence: 0.45
+  track-new-min-confidence: 0.35
+  track-new-min-salon-spawn-confidence: 0.25
   track-active-lost-frames: 45
   track-center-distance-threshold-px: 90
   track-center-size-multiplier: 2.6
-  track-counted-iou-match-threshold: 0.12
-  track-counted-continuation-iou-threshold: 0.25
-  track-counted-continuation-distance-px: 70
-  track-counted-continuation-lost-frames: 2
-  track-counted-reid-continuation-lost-frames: 20
-  track-counted-reid-continuation-distance-px: 260
-  track-counted-reid-similarity-threshold: 0.78
-  track-counted-head-continuation-distance-px: 65
   side-fallback-max-distance-px: 250
   side-fallback-max-lost-frames: 15
   count-duplicate-alighting-hold-frames: 18
@@ -127,12 +133,13 @@ pc:
   count-anchor-x-ratio: 0.5
   count-anchor-y-ratio: 0.5
   count-mode: offline
+  count-startup-window-processed-frames: 3
   count-min-anchor-movement-px: 40
   count-head-scale-grow-ratio: 1.08
   count-head-scale-shrink-ratio: 0.92
   count-scale-window: 5
   count-lost-at-door-frames: 3
-  count-min-body-height-ratio: 0.18
+  count-min-body-height-ratio: 0.10
   count-successor-max-gap-frames: 50
   count-successor-max-distance-px: 120
   count-min-door-exit-visible-frames: 12

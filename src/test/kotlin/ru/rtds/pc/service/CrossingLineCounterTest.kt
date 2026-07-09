@@ -30,34 +30,41 @@ class CrossingLineCounterTest {
     )
 
     @Test
-    fun `street to salon with head growth counts one boarding`() {
+    fun `street to salon with head growth does not count boarding`() {
         val track = TrackedPerson(1, detection(anchorY = 70f, height = 20f))
         counter.updateTrackState(track, zones, 1)
         track.detection = detection(anchorY = 35f, height = 28f)
 
         val delta = counter.updateTrackState(track, zones, 2)
 
-        assertEquals(1, delta.boardings)
+        assertEquals(0, delta.boardings)
         assertEquals(0, delta.alightings)
     }
 
     @Test
     fun `salon to street after door visit and shrink counts one alighting`() {
         val track = TrackedPerson(1, detection(anchorY = 35f, height = 28f))
+        counter.initializePrescanTrack(track, zones, 1)
         counter.updateTrackState(track, zones, 1)
         track.detection = detection(anchorY = 50f, height = 24f)
         counter.updateTrackState(track, zones, 2)
         track.detection = detection(anchorY = 70f, height = 20f)
 
-        val delta = counter.updateTrackState(track, zones, 3)
+        val outside = counter.updateTrackState(track, zones, 3)
+        track.framesSinceUpdate = 1
+        counter.updateTrackState(track, zones, 4)
+        track.framesSinceUpdate = 2
+        val delta = counter.updateTrackState(track, zones, 5)
 
+        assertEquals(0, outside.alightings)
         assertEquals(0, delta.boardings)
         assertEquals(1, delta.alightings)
     }
 
     @Test
-    fun `lost at door after shrink counts one alighting`() {
+    fun `lost at door after shrink counts alighting after valid salon history`() {
         val track = TrackedPerson(1, detection(anchorY = 35f, height = 28f))
+        counter.initializePrescanTrack(track, zones, 1)
         counter.updateTrackState(track, zones, 1)
         track.detection = detection(anchorY = 50f, height = 22f)
         counter.updateTrackState(track, zones, 2)
@@ -87,25 +94,37 @@ class CrossingLineCounterTest {
             processEveryNFrames = 3,
         )
         val track = TrackedPerson(1, detection(anchorY = 35f, height = 28f))
+        skippedFrameCounter.initializePrescanTrack(track, zones, 1)
         skippedFrameCounter.updateTrackState(track, zones, 1)
         track.detection = detection(anchorY = 50f, height = 22f)
         skippedFrameCounter.updateTrackState(track, zones, 4)
         track.detection = detection(anchorY = 70f, height = 20f)
 
-        val delta = skippedFrameCounter.updateTrackState(track, zones, 10)
+        val outside = skippedFrameCounter.updateTrackState(track, zones, 10)
+        track.framesSinceUpdate = 1
+        skippedFrameCounter.updateTrackState(track, zones, 13)
+        track.framesSinceUpdate = 2
+        val delta = skippedFrameCounter.updateTrackState(track, zones, 16)
 
+        assertEquals(0, outside.alightings)
         assertEquals(0, delta.boardings)
         assertEquals(1, delta.alightings)
     }
 
     @Test
-    fun `preboarded person seen in door then outside counts one alighting`() {
+    fun `startup person seen in door then outside counts one alighting`() {
         val track = TrackedPerson(1, detection(anchorY = 50f, height = 24f))
+        counter.initializePrescanTrack(track, zones, 1)
         counter.updateTrackState(track, zones, 1, allowPreboardedExit = true)
         track.detection = detection(anchorY = 70f, height = 22f)
 
-        val delta = counter.updateTrackState(track, zones, 2, allowPreboardedExit = true)
+        val outside = counter.updateTrackState(track, zones, 2, allowPreboardedExit = true)
+        track.framesSinceUpdate = 1
+        counter.updateTrackState(track, zones, 3, allowPreboardedExit = true)
+        track.framesSinceUpdate = 2
+        val delta = counter.updateTrackState(track, zones, 4, allowPreboardedExit = true)
 
+        assertEquals(0, outside.alightings)
         assertEquals(0, delta.boardings)
         assertEquals(1, delta.alightings)
     }
@@ -205,7 +224,7 @@ class CrossingLineCounterTest {
     }
 
     @Test
-    fun `boarding is cancelled after return outside`() {
+    fun `street to salon to street is ignored because entries are not counted`() {
         val track = TrackedPerson(1, detection(anchorY = 70f, height = 20f))
         counter.updateTrackState(track, zones, 1)
         track.detection = detection(anchorY = 35f, height = 28f)
@@ -216,7 +235,7 @@ class CrossingLineCounterTest {
 
         val cancel = counter.updateTrackState(track, zones, 4)
 
-        assertEquals(-1, cancel.boardings)
+        assertEquals(0, cancel.boardings)
         assertEquals(0, cancel.alightings)
     }
 

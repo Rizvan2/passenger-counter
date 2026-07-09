@@ -3,6 +3,7 @@ package ru.rtds.pc.service
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import ru.rtds.pc.model.DoorZoneSide
+import ru.rtds.pc.model.ExitCountingOrigin
 import ru.rtds.pc.model.TrackTrajectory
 import ru.rtds.pc.model.TrajectorySample
 
@@ -45,7 +46,7 @@ class TrackFateClassifierTest {
     }
 
     @Test
-    fun `two exiters merging into one track still count as two exits`() {
+    fun `strict policy does not count a merge fragment lost before street confirmation`() {
         // A and B coexist from the start (so neither is a newborn successor of the other).
         // A walks to the door shrinking and dies mid-way (merged into B); B completes the exit.
         val a = track(
@@ -66,9 +67,10 @@ class TrackFateClassifierTest {
             sample(6, DoorZoneSide.OUTSIDE, false, 414f, 178f, 33f),
             sample(7, DoorZoneSide.OUTSIDE, false, 415f, 177f, 33f),
         )
+        b.exitCountingOrigin = ExitCountingOrigin.STARTUP_INSIDE
         val result = classifier.classify(listOf(a, b))
         assertEquals(0, result.boardings)
-        assertEquals(2, result.alightings)
+        assertEquals(1, result.alightings)
     }
 
     @Test
@@ -91,7 +93,7 @@ class TrackFateClassifierTest {
     }
 
     @Test
-    fun `track born at door that grows into salon is one boarding`() {
+    fun `track born at door that grows into salon is not counted as boarding`() {
         // Id switched mid-entry: this "salon half" has no stable OUTSIDE visit at all.
         val t = track(
             21,
@@ -103,7 +105,7 @@ class TrackFateClassifierTest {
             sample(5, DoorZoneSide.INSIDE, false, 363f, 306f, 51f),
         )
         val result = classifier.classify(listOf(t))
-        assertEquals(1, result.boardings)
+        assertEquals(0, result.boardings)
         assertEquals(0, result.alightings)
     }
 
@@ -126,7 +128,7 @@ class TrackFateClassifierTest {
     }
 
     @Test
-    fun `street to salon with door and growth is one boarding`() {
+    fun `street to salon with door and growth is ignored`() {
         val t = track(
             1,
             // 3x on the street, small head, high in frame
@@ -142,7 +144,7 @@ class TrackFateClassifierTest {
             sample(7, DoorZoneSide.INSIDE, false, 350f, 305f, 52f),
         )
         val result = classifier.classify(listOf(t))
-        assertEquals(1, result.boardings)
+        assertEquals(0, result.boardings)
         assertEquals(0, result.alightings)
     }
 
@@ -159,6 +161,7 @@ class TrackFateClassifierTest {
             sample(6, DoorZoneSide.OUTSIDE, false, 350f, 150f, 29f),
             sample(7, DoorZoneSide.OUTSIDE, false, 350f, 150f, 30f),
         )
+        t.exitCountingOrigin = ExitCountingOrigin.STARTUP_INSIDE
         val result = classifier.classify(listOf(t))
         assertEquals(0, result.boardings)
         assertEquals(1, result.alightings)
@@ -170,6 +173,7 @@ class TrackFateClassifierTest {
             3,
             *(0..6).map { sample(it, DoorZoneSide.INSIDE, false, 500f, 320f, 50f) }.toTypedArray(),
         )
+        t.exitCountingOrigin = ExitCountingOrigin.STARTUP_INSIDE
         val result = classifier.classify(listOf(t))
         assertEquals(0, result.boardings)
         assertEquals(0, result.alightings)
@@ -204,12 +208,12 @@ class TrackFateClassifierTest {
             sample(8, DoorZoneSide.INSIDE, false, 560f, 350f, 60f),
         )
         val result = classifier.classify(listOf(t))
-        assertEquals(1, result.boardings)
+        assertEquals(0, result.boardings)
         assertEquals(0, result.alightings)
     }
 
     @Test
-    fun `inside then vanished at door with shrink is one alighting`() {
+    fun `inside then vanished at door with shrink counts old style exit`() {
         val t = track(
             6,
             sample(0, DoorZoneSide.INSIDE, false, 350f, 300f, 50f),
@@ -220,6 +224,7 @@ class TrackFateClassifierTest {
             sample(4, DoorZoneSide.BUFFER, true, 350f, 200f, 34f),
             sample(5, DoorZoneSide.BUFFER, true, 350f, 180f, 30f),
         )
+        t.exitCountingOrigin = ExitCountingOrigin.STARTUP_INSIDE
         val result = classifier.classify(listOf(t))
         assertEquals(0, result.boardings)
         assertEquals(1, result.alightings)
@@ -247,8 +252,9 @@ class TrackFateClassifierTest {
             sample(5, DoorZoneSide.OUTSIDE, false, 350f, 150f, 30f),
             sample(6, DoorZoneSide.OUTSIDE, false, 350f, 150f, 30f),
         )
+        exit.exitCountingOrigin = ExitCountingOrigin.STARTUP_INSIDE
         val result = classifier.classify(listOf(enter, exit))
-        assertEquals(1, result.boardings)
+        assertEquals(0, result.boardings)
         assertEquals(1, result.alightings)
     }
 
@@ -276,6 +282,38 @@ class TrackFateClassifierTest {
             sample(5, DoorZoneSide.INSIDE, false, 438f, 308f, 53f),
         )
         val result = classifier.classify(listOf(a, b))
+        assertEquals(0, result.boardings)
+        assertEquals(0, result.alightings)
+    }
+
+    @Test
+    fun `startup outside track counts only after disappearing before clip end`() {
+        val t = track(
+            50,
+            sample(10, DoorZoneSide.OUTSIDE, false, 350f, 150f, 30f),
+            sample(11, DoorZoneSide.OUTSIDE, false, 352f, 148f, 30f),
+            sample(12, DoorZoneSide.OUTSIDE, false, 354f, 146f, 29f),
+        )
+        t.exitCountingOrigin = ExitCountingOrigin.STARTUP_OUTSIDE
+
+        val result = classifier.classify(listOf(t), finalFrameIndex = 40)
+
+        assertEquals(0, result.boardings)
+        assertEquals(1, result.alightings)
+    }
+
+    @Test
+    fun `startup outside track visible at clip end stays pending and is not counted`() {
+        val t = track(
+            51,
+            sample(35, DoorZoneSide.OUTSIDE, false, 350f, 150f, 30f),
+            sample(38, DoorZoneSide.OUTSIDE, false, 352f, 148f, 30f),
+            sample(40, DoorZoneSide.OUTSIDE, false, 354f, 146f, 29f),
+        )
+        t.exitCountingOrigin = ExitCountingOrigin.STARTUP_OUTSIDE
+
+        val result = classifier.classify(listOf(t), finalFrameIndex = 40)
+
         assertEquals(0, result.boardings)
         assertEquals(0, result.alightings)
     }

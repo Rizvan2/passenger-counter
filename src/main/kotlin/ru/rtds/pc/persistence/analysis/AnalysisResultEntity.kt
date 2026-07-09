@@ -90,6 +90,9 @@ class AnalysisResultEntity(
     @Column(name = "door_polygon_json", columnDefinition = "text")
     var doorPolygonJson: String? = null,
 
+    @Column(name = "salon_spawn_polygon_json", columnDefinition = "text")
+    var salonSpawnPolygonJson: String? = null,
+
     @Column(name = "line_y_ratio", nullable = false)
     var lineYRatio: Float = 0f,
 

@@ -12,6 +12,7 @@ import ru.rtds.pc.ftp.service.UploadedVideoCleanupService
 import ru.rtds.pc.model.AnalysisSession
 import ru.rtds.pc.model.Detection
 import ru.rtds.pc.model.DoorZoneSide
+import ru.rtds.pc.model.ExitCountingOrigin
 import ru.rtds.pc.model.SessionStatus
 import ru.rtds.pc.model.TrackCountState
 import ru.rtds.pc.model.TrackTrajectoryStore
@@ -57,6 +58,7 @@ class AnalysisService(
     @Value("\${pc.native-head-max-area-ratio:0.08}") private val nativeHeadMaxAreaRatio: Float,
     @Value("\${pc.native-head-ignore-left-top-x:0.30}") private val nativeHeadIgnoreLeftTopX: Float,
     @Value("\${pc.native-head-ignore-left-top-y:0.36}") private val nativeHeadIgnoreLeftTopY: Float,
+    @Value("\${pc.count-startup-window-processed-frames:3}") private val countStartupWindowProcessedFrames: Int,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val initialOnboardWarmupFrames = 25
@@ -101,6 +103,7 @@ class AnalysisService(
         val trajectories = TrackTrajectoryStore()
         val alightingLocks = mutableListOf<AlightingLock>()
         val suppressedAlightingTrackIds = mutableSetOf<Int>()
+        var lastProcessedFrameIdx = 0
         log.info(
             "Analysis started: session={}, file='{}', detector={}, inputSize={}, processEveryN={}, salonPoints={}, streetPoints={}, doorPoints={}",
             session.id,
@@ -114,6 +117,7 @@ class AnalysisService(
         )
 
         val ok = frameReader.process(session.sourcePath, skipFrames = processEveryN - 1) { frameIdx, img, w, h ->
+            lastProcessedFrameIdx = frameIdx
             if (session.stopRequested) {
                 session.status = SessionStatus.STOPPED
                 return@process false
@@ -124,6 +128,7 @@ class AnalysisService(
             val countingZones = buildZones(session, w, h)
             updateInitialOnboardEstimate(session, detections, countingZones)
             val tracks = tracker.update(session.id, detections, img, countingZones)
+            updateCountingPrescan(session, tracks, countingZones, trajectories, frameIdx, h)
             expireAlightingLocks(alightingLocks, frameIdx)
             logFrameDiagnostics(session, frameIdx, w, h, detections, tracks, countingZones)
 
@@ -132,6 +137,8 @@ class AnalysisService(
             // the final counts once the whole clip is known.
             for (track in tracks) {
                 if (track.framesSinceUpdate != 0) continue
+                val origin = crossingCounter.initializeRuntimeTrackIfNeeded(track, countingZones, frameIdx)
+                trajectories.markOrigin(track.id, origin)
                 val ax = track.detection.anchorX(countAnchorXRatio)
                 val ay = track.detection.anchorY(countAnchorYRatio)
                 trajectories.record(
@@ -144,6 +151,7 @@ class AnalysisService(
                         anchorY = ay,
                         headSize = hypot(track.detection.width, track.detection.height),
                         bodyHeightRatio = track.detection.bodyOrSelf.height / h.coerceAtLeast(1).toFloat(),
+                        inSalonSpawn = countingZones.pointInSalonSpawn(ax, ay),
                     ),
                 )
             }
@@ -222,9 +230,9 @@ class AnalysisService(
         if (countMode.equals("offline", ignoreCase = true)) {
             val streamingBoardings = session.totalBoardings.get()
             val streamingAlightings = session.totalAlightings.get()
-            val offline = trackFateClassifier.classify(trajectories.trajectories())
+            val offline = trackFateClassifier.classify(trajectories.trajectories(), lastProcessedFrameIdx)
             val reconciledBoardings = offline.boardings
-            val reconciledAlightings = if (streamingAlightings > 0) streamingAlightings else offline.alightings
+            val reconciledAlightings = maxOf(streamingAlightings, offline.alightings)
             session.totalBoardings.set(reconciledBoardings)
             session.totalAlightings.set(reconciledAlightings)
             val rawOnboard = session.initialOnboard + reconciledBoardings - reconciledAlightings
@@ -471,9 +479,54 @@ class AnalysisService(
             salonPolygonRatio = session.salonPolygon,
             streetPolygonRatio = session.streetPolygon,
             doorPolygonRatio = session.doorPolygon,
+            salonSpawnPolygonRatio = session.salonSpawnPolygon,
             frameWidth = frameWidth,
             frameHeight = frameHeight,
         )
+
+    private fun updateCountingPrescan(
+        session: AnalysisSession,
+        tracks: List<TrackedPerson>,
+        countingZones: CountingZones,
+        trajectories: TrackTrajectoryStore,
+        frameIdx: Int,
+        frameHeight: Int,
+    ) {
+        if (session.countingPrescanDone) return
+        if (session.countingPrescanFrames >= countStartupWindowProcessedFrames.coerceAtLeast(0)) {
+            session.countingPrescanDone = true
+            log.info(
+                "Counting startup window closed for session {} at frame {} after {} processed frames",
+                session.id,
+                frameIdx,
+                session.countingPrescanFrames,
+            )
+            return
+        }
+        val visibleTracks = tracks.filter { it.framesSinceUpdate == 0 }
+        for (track in visibleTracks) {
+            if (track.exitCountingOrigin == ExitCountingOrigin.UNKNOWN) {
+                val origin = crossingCounter.initializePrescanTrack(track, countingZones, frameIdx)
+                trajectories.markOrigin(track.id, origin)
+            }
+            val ax = track.detection.anchorX(countAnchorXRatio)
+            val ay = track.detection.anchorY(countAnchorYRatio)
+            trajectories.record(
+                track.id,
+                TrajectorySample(
+                    frameIndex = frameIdx,
+                    zone = countingZones.zoneFor(ax, ay),
+                    inDoor = countingZones.inDoor(ax, ay),
+                    anchorX = ax,
+                    anchorY = ay,
+                    headSize = hypot(track.detection.width, track.detection.height),
+                    bodyHeightRatio = track.detection.bodyOrSelf.height / frameHeight.coerceAtLeast(1).toFloat(),
+                    inSalonSpawn = countingZones.pointInSalonSpawn(ax, ay),
+                ),
+            )
+        }
+        session.countingPrescanFrames++
+    }
 
     private fun logFrameDiagnostics(
         session: AnalysisSession,
@@ -621,6 +674,7 @@ class AnalysisService(
                 salonPolygon = countingZones.salonPolygonPx,
                 streetPolygon = countingZones.streetPolygonPx,
                 doorPolygon = countingZones.doorPolygonPx,
+                salonSpawnPolygon = countingZones.salonSpawnPolygonPx,
                 lineY = session.lineYRatio * h,
                 doorTopY = session.lineYRatio * h,
                 doorBottomY = session.lineYRatio * h,

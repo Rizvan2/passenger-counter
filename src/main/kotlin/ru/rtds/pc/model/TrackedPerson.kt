@@ -44,6 +44,9 @@ data class TrackedPerson(
     var minBoxHeight: Float = Float.POSITIVE_INFINITY,
     var maxBoxHeight: Float = Float.NEGATIVE_INFINITY,
     var firstStableZone: DoorZoneSide? = null,
+    var exitCountingOrigin: ExitCountingOrigin = ExitCountingOrigin.UNKNOWN,
+    var countEligibleForExit: Boolean = false,
+    var startupExitCandidate: Boolean = false,
 )
 
 enum class CountedDirection {
@@ -65,4 +68,13 @@ enum class DoorZoneSide {
     OUTSIDE,
     BUFFER,
     INSIDE
+}
+
+enum class ExitCountingOrigin {
+    UNKNOWN,
+    STARTUP_INSIDE,
+    STARTUP_DOOR,
+    STARTUP_OUTSIDE,
+    SPAWN_INSIDE,
+    INVALID
 }

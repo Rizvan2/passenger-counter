@@ -38,6 +38,8 @@ data class StartSessionRequest(
 
     val doorPolygon: List<LinePointDto>? = null,
 
+    val salonSpawnPolygon: List<LinePointDto>? = null,
+
     val autoInitialOnboard: Boolean = true,
 
     val initialOnboard: Int = 0,
@@ -50,8 +52,10 @@ data class StartSessionRequest(
     fun resolvedSalonPolygon(): List<NormalizedPoint> = salonPolygon.orEmpty().map { NormalizedPoint(it.x, it.y).clamped() }
     fun resolvedStreetPolygon(): List<NormalizedPoint> = streetPolygon.orEmpty().map { NormalizedPoint(it.x, it.y).clamped() }
     fun resolvedDoorPolygon(): List<NormalizedPoint> = doorPolygon.orEmpty().map { NormalizedPoint(it.x, it.y).clamped() }
+    fun resolvedSalonSpawnPolygon(): List<NormalizedPoint> = salonSpawnPolygon.orEmpty().map { NormalizedPoint(it.x, it.y).clamped() }
     fun hasExplicitPolygons(): Boolean = resolvedSalonPolygon().size >= 3 && resolvedStreetPolygon().size >= 3
     fun hasExplicitDoorPolygon(): Boolean = resolvedDoorPolygon().size >= 3
+    fun hasExplicitSalonSpawnPolygon(): Boolean = resolvedSalonSpawnPolygon().size >= 3
 }
 
 data class StartSessionResponse(
@@ -79,6 +83,7 @@ data class FrameUpdateDto(
     val salonPolygon: List<LinePointDto>,
     val streetPolygon: List<LinePointDto>,
     val doorPolygon: List<LinePointDto>,
+    val salonSpawnPolygon: List<LinePointDto>,
     val lineY: Float,
     val doorTopY: Float,
     val doorBottomY: Float,

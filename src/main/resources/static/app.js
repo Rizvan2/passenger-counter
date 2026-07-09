@@ -104,6 +104,10 @@ if (![...elEditTarget.options].some((option) => option.value === "door")) {
   const doorOption = new Option("DOOR polygon", "door");
   elEditTarget.insertBefore(doorOption, elEditTarget.querySelector('option[value="line"]'));
 }
+if (![...elEditTarget.options].some((option) => option.value === "salonSpawn")) {
+  const spawnOption = new Option("SALON SPAWN polygon", "salonSpawn");
+  elEditTarget.insertBefore(spawnOption, elEditTarget.querySelector('option[value="line"]'));
+}
 if ($("doorWidthLabel")?.previousElementSibling) $("doorWidthLabel").previousElementSibling.textContent = "DOOR";
 if ($("doorwayCount")?.previousElementSibling) $("doorwayCount").previousElementSibling.textContent = "В DOOR";
 
@@ -119,8 +123,9 @@ function applyDefaultSetup(info) {
   const salon = Array.isArray(info.defaultSalonPolygon) ? info.defaultSalonPolygon.map(clampPoint) : [];
   const street = Array.isArray(info.defaultStreetPolygon) ? info.defaultStreetPolygon.map(clampPoint) : [];
   const door = Array.isArray(info.defaultDoorPolygon) ? info.defaultDoorPolygon.map(clampPoint) : [];
+  const salonSpawn = Array.isArray(info.defaultSalonSpawnPolygon) ? info.defaultSalonSpawnPolygon.map(clampPoint) : [];
   if (salon.length >= 3 && street.length >= 3 && door.length >= 3) {
-    zonePolygons = { salon, street, door };
+    zonePolygons = { salon, street, door, salonSpawn: salonSpawn.length >= 3 ? salonSpawn : defaultSalonSpawnPolygon(salon) };
   } else {
     zonePolygons = generatePolygonsFromLine();
   }
@@ -296,7 +301,7 @@ function redrawPreview() {
   previewCv.width = width;
   previewCv.height = height;
   previewCtx.drawImage(img, 0, 0, width, height);
-  drawZones(previewCtx, zonePolygons.salon, zonePolygons.street, zonePolygons.door, width, height, true);
+  drawZones(previewCtx, zonePolygons.salon, zonePolygons.street, zonePolygons.door, zonePolygons.salonSpawn, width, height, true);
   drawGeneratorLine(previewCtx, width, height);
 }
 
@@ -311,7 +316,31 @@ function generatePolygonsFromLine() {
     salon: clipHalfPlane(frame, lineSegment, insideOnPositiveSide),
     street: clipHalfPlane(frame, lineSegment, !insideOnPositiveSide),
     door: doorPortalPolygon(lineSegment),
+    salonSpawn: defaultSalonSpawnPolygon(clipHalfPlane(frame, lineSegment, insideOnPositiveSide)),
   };
+}
+
+function defaultSalonSpawnPolygon(salon) {
+  if (!salon?.length) {
+    return [
+      { x: 0.90, y: 0.03 },
+      { x: 0.98, y: 0.03 },
+      { x: 0.98, y: 0.98 },
+      { x: 0.90, y: 0.98 },
+    ];
+  }
+  const minX = Math.min(...salon.map((p) => p.x));
+  const maxX = Math.max(...salon.map((p) => p.x));
+  const minY = Math.min(...salon.map((p) => p.y));
+  const maxY = Math.max(...salon.map((p) => p.y));
+  const width = maxX - minX;
+  const height = maxY - minY;
+  return [
+    clampPoint({ x: maxX - width * 0.10, y: minY + height * 0.02 }),
+    clampPoint({ x: maxX - width * 0.02, y: minY + height * 0.02 }),
+    clampPoint({ x: maxX - width * 0.02, y: maxY - height * 0.02 }),
+    clampPoint({ x: maxX - width * 0.10, y: maxY - height * 0.02 }),
+  ];
 }
 
 function doorPortalPolygon(line) {
@@ -364,10 +393,11 @@ function signedCross(ax, ay, bx, by, px, py) {
   return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
 }
 
-function drawZones(canvasCtx, salon, street, door, width, height, showHandles) {
+function drawZones(canvasCtx, salon, street, door, salonSpawn, width, height, showHandles) {
   drawPolygon(canvasCtx, salon, width, height, "rgba(79,125,243,.18)", "#79a7ff", "SALON", showHandles ? "salon" : null);
   drawPolygon(canvasCtx, street, width, height, "rgba(190,197,207,.14)", "#d1d7e0", "STREET", showHandles ? "street" : null);
   drawPolygon(canvasCtx, door, width, height, "rgba(246,200,95,.12)", "#f6c85f", "DOOR", showHandles ? "door" : null);
+  drawPolygon(canvasCtx, salonSpawn, width, height, "rgba(65,214,154,.12)", "#41d69a", "SPAWN", showHandles ? "salonSpawn" : null);
 }
 
 function drawPolygon(canvasCtx, polygon, width, height, fill, stroke, label, handleZone) {
@@ -433,7 +463,7 @@ function drawHandle(canvasCtx, x, y, active) {
 function updateSummary() {
   const name = selectedPath ? selectedPath.split(/[\\/]/).pop() : "не выбран";
   $("sumFile").textContent = name;
-  $("sumLine").textContent = `SALON ${zonePolygons.salon.length} / STREET ${zonePolygons.street.length} / DOOR ${zonePolygons.door.length}`;
+  $("sumLine").textContent = `SALON ${zonePolygons.salon.length} / STREET ${zonePolygons.street.length} / DOOR ${zonePolygons.door.length} / SPAWN ${zonePolygons.salonSpawn.length}`;
   $("sumSide").textContent = insideOnPositiveSide ? "positive" : "negative";
   $("sumInitial").textContent = elAutoInit.checked ? "авто" : `${parseInt(elInitOnb.value, 10) || 0} чел.`;
 }
@@ -461,6 +491,7 @@ async function startSession() {
       salonPolygon: zonePolygons.salon,
       streetPolygon: zonePolygons.street,
       doorPolygon: zonePolygons.door,
+      salonSpawnPolygon: zonePolygons.salonSpawn,
       autoInitialOnboard: elAutoInit.checked,
       initialOnboard: elAutoInit.checked ? 0 : (parseInt(elInitOnb.value, 10) || 0),
     };
@@ -673,6 +704,7 @@ async function renderFrameMessage(msg, appendEvents) {
       salonPolygon: msg.salonPolygon || [],
       streetPolygon: msg.streetPolygon || [],
       doorPolygon: msg.doorPolygon || [],
+      salonSpawnPolygon: msg.salonSpawnPolygon || [],
     };
     elCanvas.width = msg.width;
     elCanvas.height = msg.height;
@@ -716,7 +748,8 @@ function drawMonitorZones(frame) {
   const salon = normalizePolygonForCanvas(frame.salonPolygon, frame.width, frame.height);
   const street = normalizePolygonForCanvas(frame.streetPolygon, frame.width, frame.height);
   const door = normalizePolygonForCanvas(frame.doorPolygon, frame.width, frame.height);
-  drawZones(ctx, salon, street, door, frame.width, frame.height, false);
+  const salonSpawn = normalizePolygonForCanvas(frame.salonSpawnPolygon, frame.width, frame.height);
+  drawZones(ctx, salon, street, door, salonSpawn, frame.width, frame.height, false);
 }
 
 function normalizePolygonForCanvas(points, width, height) {

@@ -81,12 +81,18 @@ class ReceivedVideoDispatcher(
         } else {
             fallbackDoorPolygon
         }
+        val salonSpawnPolygon = if (properties.analysis.hasExplicitSalonSpawnPolygon()) {
+            properties.analysis.resolvedSalonSpawnPolygon()
+        } else {
+            emptyList()
+        }
 
         val session = sessionManager.create(
             videoPath          = videoFile.toAbsolutePath().toString(),
             salonPolygon       = salonPolygon,
             streetPolygon      = streetPolygon,
             doorPolygon        = doorPolygon,
+            salonSpawnPolygon  = salonSpawnPolygon,
             lineAxRatio        = legacyLineAx,
             lineAyRatio        = legacyLineAy,
             lineBxRatio        = legacyLineBx,

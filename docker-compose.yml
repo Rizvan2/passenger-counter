@@ -42,6 +42,8 @@ services:
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: "org.postgresql.Driver"
       SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
       ANALYSIS_RESULTS_PERSISTENCE_ENABLED: "true"
+      PC_VIDEOS_DIR: "/videos"
+      PC_LOCAL_INGEST_ENABLED: "true"
       FTP_PORT: "2022"
       FTP_USER: "admin"
       FTP_PASSWORD: "admin"

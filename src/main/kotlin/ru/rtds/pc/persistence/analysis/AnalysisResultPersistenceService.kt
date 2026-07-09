@@ -51,6 +51,7 @@ class AnalysisResultPersistenceService(
                     salonPolygonJson = objectMapper.writeValueAsString(session.salonPolygon),
                     streetPolygonJson = objectMapper.writeValueAsString(session.streetPolygon),
                     doorPolygonJson = objectMapper.writeValueAsString(session.doorPolygon),
+                    salonSpawnPolygonJson = objectMapper.writeValueAsString(session.salonSpawnPolygon),
                     lineYRatio      = session.lineYRatio,
                     insideOnTop     = session.insideOnTop,
                     lineAxRatio     = session.lineAxRatio,

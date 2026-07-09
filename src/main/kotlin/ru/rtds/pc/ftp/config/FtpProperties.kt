@@ -28,6 +28,7 @@ data class FtpProperties(
         val salonPolygon: List<NormalizedPoint> = emptyList(),
         val streetPolygon: List<NormalizedPoint> = emptyList(),
         val doorPolygon: List<NormalizedPoint> = emptyList(),
+        val salonSpawnPolygon: List<NormalizedPoint> = emptyList(),
         val insideOnTop: Boolean = false,
         val insideOnPositiveSide: Boolean? = null,
         val autoInitialOnboard: Boolean = true,
@@ -41,7 +42,9 @@ data class FtpProperties(
         fun resolvedSalonPolygon(): List<NormalizedPoint> = salonPolygon.map { it.clamped() }
         fun resolvedStreetPolygon(): List<NormalizedPoint> = streetPolygon.map { it.clamped() }
         fun resolvedDoorPolygon(): List<NormalizedPoint> = doorPolygon.map { it.clamped() }
+        fun resolvedSalonSpawnPolygon(): List<NormalizedPoint> = salonSpawnPolygon.map { it.clamped() }
         fun hasExplicitPolygons(): Boolean = resolvedSalonPolygon().size >= 3 && resolvedStreetPolygon().size >= 3
         fun hasExplicitDoorPolygon(): Boolean = resolvedDoorPolygon().size >= 3
+        fun hasExplicitSalonSpawnPolygon(): Boolean = resolvedSalonSpawnPolygon().size >= 3
     }
 }

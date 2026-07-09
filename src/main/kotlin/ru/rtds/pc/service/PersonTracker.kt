@@ -21,18 +21,12 @@ class PersonTracker(
     @Value("\${pc.side-fallback-max-lost-frames:8}") private val sideFallbackMaxLostFrames: Int,
     @Value("\${pc.track-center-distance-threshold-px:90}") private val centerMatchThresholdPx: Float,
     @Value("\${pc.track-center-size-multiplier:1.8}") private val centerMatchSizeMultiplier: Float,
-    @Value("\${pc.track-counted-iou-match-threshold:0.12}") private val countedIouMatchThreshold: Float,
-    @Value("\${pc.track-counted-continuation-iou-threshold:0.25}") private val countedContinuationIouThreshold: Float,
-    @Value("\${pc.track-counted-continuation-distance-px:70}") private val countedContinuationDistancePx: Float,
-    @Value("\${pc.track-counted-continuation-lost-frames:2}") private val countedContinuationLostFrames: Int,
-    @Value("\${pc.track-counted-reid-continuation-lost-frames:20}") private val countedReidContinuationLostFrames: Int,
-    @Value("\${pc.track-counted-reid-continuation-distance-px:260}") private val countedReidContinuationDistancePx: Float,
-    @Value("\${pc.track-counted-reid-similarity-threshold:0.78}") private val countedReidThreshold: Float,
-    @Value("\${pc.track-counted-head-continuation-distance-px:65}") private val countedHeadContinuationDistancePx: Float,
     @Value("\${pc.count-anchor-x-ratio:0.5}") private val countAnchorXRatio: Float,
     @Value("\${pc.count-anchor-y-ratio:0.95}") private val countAnchorYRatio: Float,
     @Value("\${pc.reid-refresh-every-frames:4}") private val reidRefreshEveryFrames: Int,
     @Value("\${pc.track-new-min-confidence:0.45}") private val newTrackMinConfidence: Float,
+    @Value("\${pc.track-new-min-salon-spawn-confidence:\${pc.track-new-min-confidence:0.45}}")
+    private val newTrackMinSalonSpawnConfidence: Float,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val iouMatchThreshold = 0.3f
@@ -163,8 +157,7 @@ class PersonTracker(
         }
         for ((detIndex, det) in unmatchedDets.withIndex()) {
             val embedding = unmatchedEmbeddings.getOrNull(detIndex)
-            var resurrected = findCountedContinuation(state, embedding, det, doorZone)
-                ?: findByReid(state, embedding, det, doorZone)
+            var resurrected = findByReid(state, embedding, det, doorZone)
 
             // Door handoff is deliberately narrower than normal ReID: it can only reuse an
             // uncounted track that already has salon/door evidence, so a glare/pose change at the
@@ -189,15 +182,16 @@ class PersonTracker(
                     state.lostTracks.size,
                 )
             } else {
-                // Birth gate: a NEW id is created only from a confident detection. Low-confidence
-                // blobs (glare, bags, half-occluded fragments) may still MATCH or RESURRECT an
-                // existing track above, but must not spawn phantom passengers of their own.
-                if (det.confidence < newTrackMinConfidence) {
+                // Birth gate: weak new detections are allowed only in the salon-side spawn strip
+                // where partially visible passengers can enter the frame. In the door/street
+                // area they are usually hands, glare, rails, or bags.
+                val requiredConfidence = requiredBirthConfidence(det, doorZone)
+                if (det.confidence < requiredConfidence) {
                     log.debug(
                         "Tracker birth rejected: session={}, conf={} < {}, box=[{},{}]",
                         sessionId,
                         "%.3f".format(det.confidence),
-                        "%.2f".format(newTrackMinConfidence),
+                        "%.2f".format(requiredConfidence),
                         "%.1f".format(det.centerX),
                         "%.1f".format(det.centerY),
                     )
@@ -250,10 +244,6 @@ class PersonTracker(
         detections: List<Detection>,
     ): Map<TrackedPerson, ActiveMatch> {
         val reusableTracks = tracks.filterNot { it.isAlighted }
-        val countedVisibleTracks = tracks.filter { it.isAlighted && it.framesSinceUpdate == 0 }
-        val countedCoastingTracks = tracks.filter {
-            it.isAlighted && it.framesSinceUpdate in 1..countedContinuationLostFrames.coerceAtLeast(0)
-        }
         val assignedTracks = mutableSetOf<TrackedPerson>()
         val assignedDets = mutableSetOf<Detection>()
         val matches = mutableMapOf<TrackedPerson, ActiveMatch>()
@@ -270,32 +260,7 @@ class PersonTracker(
                 }
             }
         }
-        val countedIouCandidates = countedVisibleTracks.flatMap { track ->
-            detections.mapNotNull { det ->
-                val detBox = det.bodyOrSelf
-                val trackBox = track.detection.bodyOrSelf
-                val iou = detBox.iou(trackBox)
-                if (iou >= countedIouMatchThreshold) {
-                    ActiveMatch(track, det, iou, detBox.centerDistanceTo(trackBox), "counted-iou")
-                } else {
-                    null
-                }
-            }
-        }
-        val countedCoastingCandidates = countedCoastingTracks.flatMap { track ->
-            detections.mapNotNull { det ->
-                val detBox = det.bodyOrSelf
-                val trackBox = track.detection.bodyOrSelf
-                val iou = detBox.iou(trackBox)
-                val distance = detBox.centerDistanceTo(trackBox)
-                if (iou >= countedContinuationIouThreshold && distance <= countedContinuationDistanceLimit(track, det)) {
-                    ActiveMatch(track, det, iou, distance, "counted-continuation-iou")
-                } else {
-                    null
-                }
-            }
-        }
-        val iouCandidates = (regularIouCandidates + countedIouCandidates + countedCoastingCandidates).sortedWith(
+        val iouCandidates = regularIouCandidates.sortedWith(
             compareByDescending<ActiveMatch> { it.iou }
                 .thenBy { it.distance }
         )
@@ -321,6 +286,13 @@ class PersonTracker(
         return matches
     }
 
+    private fun requiredBirthConfidence(det: Detection, doorZone: CountingZones?): Float {
+        if (doorZone?.pointInSalonSpawn(det, countAnchorXRatio, countAnchorYRatio) == true) {
+            return minOf(newTrackMinConfidence, newTrackMinSalonSpawnConfidence)
+        }
+        return newTrackMinConfidence
+    }
+
     private fun assignCandidates(
         candidates: List<ActiveMatch>,
         assignedTracks: MutableSet<TrackedPerson>,
@@ -342,71 +314,6 @@ class PersonTracker(
         val detSize = max(detBox.width, detBox.height)
         val sizeBasedThreshold = max(trackSize, detSize) * centerMatchSizeMultiplier.coerceAtLeast(0.5f)
         return minOf(centerMatchThresholdPx, sizeBasedThreshold)
-    }
-
-    private fun findCountedContinuation(
-        state: TrackerState,
-        embedding: FloatArray?,
-        det: Detection,
-        doorZone: CountingZones?,
-    ): TrackedPerson? {
-        if (!isAtExitArea(det, doorZone)) return null
-
-        val candidates = (state.lostTracks.asSequence() +
-            state.activeTracks.asSequence().filter { it.framesSinceUpdate > 0 })
-            .filter { it.isAlighted }
-            .filter { it.framesSinceUpdate <= countedReidContinuationLostFrames.coerceAtLeast(countedContinuationLostFrames) }
-
-        var best: TrackedPerson? = null
-        var bestScore = Float.NEGATIVE_INFINITY
-        for (track in candidates) {
-            val detBox = det.bodyOrSelf
-            val trackBox = track.detection.bodyOrSelf
-            val distance = detBox.centerDistanceTo(trackBox)
-            val distanceLimit = countedContinuationDistanceLimit(track, det)
-            val iou = detBox.iou(trackBox)
-            val spatialOk = track.framesSinceUpdate <= countedContinuationLostFrames.coerceAtLeast(0) &&
-                iou >= countedContinuationIouThreshold &&
-                distance <= distanceLimit
-            val headDistance = hypot(
-                det.anchorX(countAnchorXRatio) - track.detection.anchorX(countAnchorXRatio),
-                det.anchorY(countAnchorYRatio) - track.detection.anchorY(countAnchorYRatio),
-            )
-            val headSizeRatio = sizeRatio(track.detection, det)
-            val headContinuationOk = track.framesSinceUpdate <= countedReidContinuationLostFrames.coerceAtLeast(0) &&
-                headDistance <= countedHeadContinuationDistanceLimit(track, det) &&
-                headSizeRatio in 0.55f..1.8f
-            val appearance = if (embedding != null && track.embedding != null) {
-                reidService.similarity(embedding, track.embedding!!)
-            } else {
-                null
-            }
-            val appearanceOk = appearance != null &&
-                track.framesSinceUpdate <= countedReidContinuationLostFrames.coerceAtLeast(0) &&
-                appearance >= countedReidThreshold &&
-                distance <= countedReidContinuationDistanceLimit()
-
-            if (!spatialOk && !headContinuationOk && !appearanceOk) continue
-
-            val score = (appearance ?: 0f) +
-                iou -
-                distance / distanceLimit.coerceAtLeast(1f) -
-                headDistance / countedHeadContinuationDistanceLimit(track, det).coerceAtLeast(1f)
-            if (score > bestScore) {
-                bestScore = score
-                best = track
-            }
-        }
-
-        if (best != null) {
-            log.debug(
-                "Counted continuation: re-attached alighted track id={} (lostFrames={}, score={})",
-                best.id,
-                best.framesSinceUpdate,
-                "%.3f".format(bestScore),
-            )
-        }
-        return best
     }
 
     private fun findByReid(
@@ -515,27 +422,6 @@ class PersonTracker(
 
     private fun sideFallbackDistanceLimit(track: TrackedPerson, det: Detection): Float =
         minOf(sideFallbackMaxDistancePx, centerThresholdFor(track, det) * 2f)
-
-    private fun countedContinuationDistanceLimit(track: TrackedPerson, det: Detection): Float =
-        minOf(countedContinuationDistancePx, centerThresholdFor(track, det) * 1.5f)
-
-    private fun countedHeadContinuationDistanceLimit(track: TrackedPerson, det: Detection): Float {
-        val trackHead = hypot(track.detection.width, track.detection.height)
-        val detHead = hypot(det.width, det.height)
-        return minOf(
-            countedHeadContinuationDistancePx,
-            maxOf(trackHead, detHead) * 2.2f,
-        )
-    }
-
-    private fun sizeRatio(a: Detection, b: Detection): Float {
-        val aSize = hypot(a.width, a.height).coerceAtLeast(1f)
-        val bSize = hypot(b.width, b.height).coerceAtLeast(1f)
-        return minOf(aSize, bSize) / maxOf(aSize, bSize)
-    }
-
-    private fun countedReidContinuationDistanceLimit(): Float =
-        countedReidContinuationDistancePx.coerceAtLeast(countedContinuationDistancePx)
 
     fun getAllTracks(): List<TrackedPerson> =
         states.values.flatMap { state -> synchronized(state) { state.activeTracks + state.lostTracks } }
