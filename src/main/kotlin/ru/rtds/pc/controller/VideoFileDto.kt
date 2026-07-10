@@ -3,6 +3,7 @@ package ru.rtds.pc.controller
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import ru.rtds.pc.model.VideoMetadata
 import ru.rtds.pc.service.VideoFrameReader
 import java.io.File
 import java.nio.file.Files
@@ -18,6 +19,10 @@ data class VideoFileDto(
     val path: String,
     val sizeBytes: Long,
     val modified: String,
+    val videoDeviceId: String?,
+    val recordDate: String?,
+    val channel: Int?,
+    val cameraCode: String?,
 )
 
 data class FramePreviewDto(
@@ -91,15 +96,21 @@ class VideoController(
 
     private fun toDto(path: Path): VideoFileDto {
         val attrs = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes::class.java)
+        val absolutePath = path.toAbsolutePath().toString()
+        val metadata = VideoMetadata.fromPath(absolutePath)
         val modified = LocalDateTime.ofInstant(
             Instant.ofEpochMilli(attrs.lastModifiedTime().toMillis()),
             ZoneId.systemDefault()
         ).format(dateFormatter)
         return VideoFileDto(
             name = path.fileName.toString(),
-            path = path.toAbsolutePath().toString(),
+            path = absolutePath,
             sizeBytes = attrs.size(),
             modified = modified,
+            videoDeviceId = metadata.videoDeviceId,
+            recordDate = metadata.recordDateText,
+            channel = metadata.channel,
+            cameraCode = metadata.cameraCode,
         )
     }
 }

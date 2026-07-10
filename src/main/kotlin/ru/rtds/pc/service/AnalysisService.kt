@@ -171,7 +171,6 @@ class AnalysisService(
                     frameIdx,
                     allowPreboardedExit = true,
                 )
-                if (delta.boardings != 0) session.totalBoardings.addAndGet(delta.boardings)
                 val alightingDelta = reconcileAlightingDelta(
                     track = track,
                     delta = delta,
@@ -185,14 +184,13 @@ class AnalysisService(
                         return@let
                     }
                     log.info(
-                        "Passenger event: session={}, frame={}, track={}, direction={}, from={}, to={}, totals(boardings={}, alightings={})",
+                        "Passenger event: session={}, frame={}, track={}, direction={}, from={}, to={}, totalExited={}",
                         session.id,
                         frameIdx,
                         it.trackId,
                         it.direction,
                         it.from,
                         it.to,
-                        session.totalBoardings.get(),
                         session.totalAlightings.get(),
                     )
                     pendingEvents.add(it)
@@ -225,38 +223,32 @@ class AnalysisService(
             session.status = if (ok) SessionStatus.FINISHED else SessionStatus.FAILED
         }
 
-        // Pass 2: offline classification keeps full-trajectory boardings, while alightings prefer
-        // the streaming counter because it suppresses short-lived duplicate track fragments.
+        // Pass 2: exit-only offline classification reconciles full trajectories with the
+        // streaming counter, which suppresses short-lived duplicate track fragments.
         if (countMode.equals("offline", ignoreCase = true)) {
-            val streamingBoardings = session.totalBoardings.get()
             val streamingAlightings = session.totalAlightings.get()
             val offline = trackFateClassifier.classify(trajectories.trajectories(), lastProcessedFrameIdx)
-            val reconciledBoardings = offline.boardings
             val reconciledAlightings = maxOf(streamingAlightings, offline.alightings)
-            session.totalBoardings.set(reconciledBoardings)
+            session.totalBoardings.set(0)
             session.totalAlightings.set(reconciledAlightings)
-            val rawOnboard = session.initialOnboard + reconciledBoardings - reconciledAlightings
+            val rawOnboard = session.initialOnboard - reconciledAlightings
             session.currentOnboard = rawOnboard.coerceIn(0, capacity)
             log.info(
-                "Offline reconciliation: session={}, tracks={}, streaming(b={}, a={}) -> offline(b={}, a={}) -> final(b={}, a={}), fates={}",
+                "Offline reconciliation: session={}, tracks={}, streamingExited={} -> offlineExited={} -> finalExited={}, fates={}",
                 session.id,
                 trajectories.size,
-                streamingBoardings,
                 streamingAlightings,
-                offline.boardings,
                 offline.alightings,
-                reconciledBoardings,
                 reconciledAlightings,
                 offline.fateCounts,
             )
         }
 
         log.info(
-            "Analysis finished: session={}, status={}, framesProcessed={}, boardings={}, alightings={}, onboard={}",
+            "Analysis finished: session={}, status={}, framesProcessed={}, exited={}, onboard={}",
             session.id,
             session.status,
             session.framesProcessed,
-            session.totalBoardings.get(),
             session.totalAlightings.get(),
             session.currentOnboard,
         )
@@ -690,7 +682,8 @@ class AnalysisService(
                 insideOnPositiveSide = session.insideOnPositiveSide,
                 doorCorridor = emptyList(),
                 events = eventDtos,
-                boardings = session.totalBoardings.get(),
+                exited = session.totalAlightings.get(),
+                boardings = 0,
                 alightings = session.totalAlightings.get(),
                 initialOnboard = session.initialOnboard,
                 initialOnboardLocked = session.initialOnboardDetected,
@@ -710,7 +703,8 @@ class AnalysisService(
             session.id,
             SessionFinishedDto(
                 status = session.status.name,
-                totalBoardings = session.totalBoardings.get(),
+                totalExited = session.totalAlightings.get(),
+                totalBoardings = 0,
                 totalAlightings = session.totalAlightings.get(),
                 finalOnboard = session.currentOnboard,
                 framesProcessed = session.framesProcessed,

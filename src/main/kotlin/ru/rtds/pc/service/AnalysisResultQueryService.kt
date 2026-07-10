@@ -40,8 +40,10 @@ class AnalysisResultQueryService(
         analysisResultRepository.findByVideoDeviceIdAndPeriod(videoDeviceId, from, to)
             .map(::toResponse)
 
-    private fun toResponse(entity: AnalysisResultEntity): AnalysisResultResponse =
-        AnalysisResultResponse(
+    private fun toResponse(entity: AnalysisResultEntity): AnalysisResultResponse {
+        @Suppress("DEPRECATION")
+        val exited = maxOf(entity.exitedCount, entity.totalAlightings)
+        return AnalysisResultResponse(
             sessionId = entity.sessionId,
             sourcePath = entity.sourcePath,
             originalRelativePath = entity.originalRelativePath,
@@ -49,6 +51,7 @@ class AnalysisResultQueryService(
             videoDeviceId = entity.videoDeviceId,
             recordDate = entity.recordDate,
             channel = entity.channel,
+            cameraCode = entity.eventCode ?: entity.channel?.toString(),
             eventCode = entity.eventCode,
             recordType = entity.recordType,
             clipStartedAtMs = entity.clipStartedAtMs,
@@ -57,9 +60,13 @@ class AnalysisResultQueryService(
             fileUid = entity.fileUid,
             sourceHash = entity.sourceHash,
             source = entity.source,
+            zoneProfileId = entity.zoneProfileId,
+            zoneProfileName = entity.zoneProfileName,
+            logicalDoor = entity.logicalDoor,
             status = entity.status,
-            totalBoardings = entity.totalBoardings,
-            totalAlightings = entity.totalAlightings,
+            totalExited = exited,
+            totalBoardings = 0,
+            totalAlightings = exited,
             finalOnboard = entity.finalOnboard,
             initialOnboard = entity.initialOnboard,
             framesProcessed = entity.framesProcessed,
@@ -78,6 +85,7 @@ class AnalysisResultQueryService(
             finishedAtMs = entity.finishedAtMs,
             errorMessage = entity.errorMessage,
         )
+    }
 
     private fun parsePolygon(json: String?): List<LinePointDto> {
         if (json.isNullOrBlank()) return emptyList()

@@ -67,7 +67,10 @@ data class SessionStatusResponse(
     val sessionId: String,
     val status: String,
     val framesProcessed: Int,
+    val totalExited: Int,
+    @Deprecated("Exit-only mode always reports zero boardings")
     val totalBoardings: Int,
+    @Deprecated("Use totalExited")
     val totalAlightings: Int,
     val currentOnboard: Int,
     val errorMessage: String?,
@@ -99,7 +102,10 @@ data class FrameUpdateDto(
     val insideOnPositiveSide: Boolean,
     val doorCorridor: List<LinePointDto>,
     val events: List<PassengerEventDto>,
+    val exited: Int,
+    @Deprecated("Exit-only mode always reports zero boardings")
     val boardings: Int,
+    @Deprecated("Use exited")
     val alightings: Int,
     val initialOnboard: Int,
     val initialOnboardLocked: Boolean,
@@ -144,7 +150,10 @@ data class PassengerEventDto(
 data class SessionFinishedDto(
     val type: String = "FINISHED",
     val status: String,
+    val totalExited: Int,
+    @Deprecated("Exit-only mode always reports zero boardings")
     val totalBoardings: Int,
+    @Deprecated("Use totalExited")
     val totalAlightings: Int,
     val finalOnboard: Int,
     val framesProcessed: Int,

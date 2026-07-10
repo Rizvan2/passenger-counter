@@ -14,6 +14,13 @@ import javax.imageio.ImageIO
 import javax.imageio.ImageWriteParam
 import javax.imageio.stream.MemoryCacheImageOutputStream
 
+data class VideoFrameSnapshot(
+    val frameIndex: Int,
+    val image: BufferedImage,
+    val width: Int,
+    val height: Int,
+)
+
 @Service
 class VideoFrameReader(
     // Минимальный размер стороны кадра для анализа.
@@ -83,6 +90,20 @@ class VideoFrameReader(
      * Вычисляет коэффициент апскейла так, чтобы меньшая сторона была >= minFrameHeight.
      * Возвращает 1.0 если видео уже достаточно большое.
      */
+    fun readFrame(sourcePath: String, requestedFrameIndex: Int): VideoFrameSnapshot? {
+        val targetFrameIndex = requestedFrameIndex.coerceAtLeast(0)
+        var snapshot: VideoFrameSnapshot? = null
+        process(sourcePath, skipFrames = 0) { frameIndex, image, width, height ->
+            if (frameIndex >= targetFrameIndex) {
+                snapshot = VideoFrameSnapshot(frameIndex, image, width, height)
+                false
+            } else {
+                true
+            }
+        }
+        return snapshot
+    }
+
     fun upscaleRatio(width: Int, height: Int): Float {
         val minSide = minOf(width, height)
         return if (minSide < minFrameHeight) minFrameHeight.toFloat() / minSide else 1.0f

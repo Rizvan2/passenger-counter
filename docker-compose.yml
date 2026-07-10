@@ -29,7 +29,7 @@ services:
       - "30000-30010:30000-30010"
     volumes:
       # Видео файлы — кладёшь сюда и используешь путь /videos/имя.mp4 в UI
-      - ./videos:/videos:ro
+      - ./videos:/videos
       # Кеш моделей чтобы не качались заново при пересборке
       - ./models:/app/models
       # FTP-вход для MDVR

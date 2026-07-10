@@ -123,6 +123,82 @@
     .vitem.sel .vitem-name { color: #79a7ff; }
     .vitem-meta { font-size: 11px; color: #5b6672; margin-top: 1px; }
     .manual-row { border-top: 1px solid #292e38; padding-top: 12px; margin-top: 10px; }
+    .launch-panel {
+      border-top: 1px solid #292e38;
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+    .launch-panel .summary { gap: 5px; margin-top: 10px; margin-bottom: 0; }
+    .launch-panel .sum-row { font-size: 12px; align-items: baseline; }
+    .launch-panel .sum-row b { max-width: 58%; }
+    .launch-panel .launch-btn {
+      padding: 10px;
+      font-size: 13px;
+      border-radius: 6px;
+    }
+    .launch-panel .launch-err {
+      margin-top: 8px;
+      font-size: 11px;
+      padding: 7px 8px;
+    }
+
+    .door-config-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .door-config-grid .field-wide { grid-column: 1 / -1; }
+    .compact-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .compact-actions button {
+      min-height: 34px;
+      padding: 0 12px;
+      background: #252a34;
+      border: 1px solid #333946;
+      color: #dce2ea;
+      font-size: 12px;
+    }
+    .compact-actions button.primary { background: #426ee8; border-color: #426ee8; }
+    .config-note {
+      min-height: 18px;
+      font-size: 12px;
+      color: #7b8492;
+      word-break: break-word;
+    }
+    .config-note.ok { color: #75e3ae; }
+    .config-note.err { color: #ff9a9a; }
+    .binding-list {
+      display: grid;
+      gap: 6px;
+      max-height: 150px;
+      overflow: auto;
+      margin-top: 10px;
+    }
+    .binding-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 9px;
+      border: 1px solid #292e38;
+      border-radius: 6px;
+      background: #111317;
+      font-size: 12px;
+    }
+    .binding-row b { color: #e8eaee; }
+    .binding-row span { color: #7b8492; display: block; margin-top: 2px; }
+    .binding-row em {
+      color: #f6c85f;
+      font-style: normal;
+      font-weight: 800;
+      font-size: 11px;
+    }
+    @media (max-width: 560px) {
+      .door-config-grid { grid-template-columns: 1fr; }
+    }
 
     .preview-wrap {
       position: relative;
@@ -233,6 +309,17 @@
           <input id="videoPath" type="text" placeholder="/videos/bus.mp4">
         </label>
       </div>
+      <div class="launch-panel">
+        <button id="btnStart" class="primary launch-btn" disabled>Запустить анализ →</button>
+        <button id="btnStop" class="danger launch-btn" disabled style="margin-top:8px;display:none">Остановить</button>
+        <div id="launchErr" class="launch-err hidden"></div>
+        <div class="summary">
+          <div class="sum-row"><span>Файл:</span><b id="sumFile">не выбран</b></div>
+          <div class="sum-row"><span>Зоны:</span><b id="sumLine">SALON 4 / STREET 4</b></div>
+          <div class="sum-row"><span>Конфиг:</span><b id="sumProfile">application-default</b></div>
+          <div class="sum-row"><span>Нач. заполнение:</span><b id="sumInitial">авто</b></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -253,26 +340,73 @@
           <select id="editTarget">
             <option value="salon" selected>SALON polygon</option>
             <option value="street">STREET polygon</option>
-            <option value="line">Generator line</option>
           </select>
         </label>
         <div class="chk-row">
           <button id="addPoint" type="button">+ point</button>
           <button id="deletePoint" type="button">- point</button>
-          <button id="generatePolygons" type="button">Generate from line</button>
         </div>
-        <label class="field">
-          <span>Положение линии-генератора <b id="lineLabel">70%</b></span>
-          <input id="lineRatio" type="range" min="5" max="95" value="70">
-        </label>
-        <label class="field">
-          <span>Сторона SALON для генератора</span>
-          <select id="insideSide">
-            <option value="top">сверху от линии</option>
-            <option value="bottom" selected>снизу от линии</option>
-          </select>
-          <button id="flipSide" type="button">Поменять сторону</button>
-        </label>
+      </div>
+    </div>
+
+    <div class="sp-card">
+      <div class="sp-title">Конфигурации дверей</div>
+      <div class="params-grid">
+        <div class="door-config-grid">
+          <label class="field field-wide">
+            <span>Профиль зон</span>
+            <select id="profileSelect"></select>
+          </label>
+          <label class="field">
+            <span>Имя</span>
+            <input id="profileName" type="text" placeholder="front_default">
+          </label>
+          <label class="field">
+            <span>Тип двери</span>
+            <select id="profileDoorType">
+              <option value="FRONT">FRONT</option>
+              <option value="REAR">REAR</option>
+              <option value="CUSTOM" selected>CUSTOM</option>
+            </select>
+          </label>
+        </div>
+        <div class="compact-actions">
+          <button id="reloadProfiles" type="button">Обновить</button>
+          <button id="saveProfile" class="primary" type="button">Сохранить как новый</button>
+          <button id="updateProfile" type="button">Перезаписать</button>
+        </div>
+        <div id="profileStatus" class="config-note"></div>
+
+        <div class="door-config-grid">
+          <label class="field">
+            <span>Регистратор</span>
+            <input id="bindRecorderId" type="text" placeholder="088037000054">
+          </label>
+          <label class="field">
+            <span>Код камеры</span>
+            <input id="bindCameraCode" type="text" placeholder="00140004">
+          </label>
+          <label class="field">
+            <span>Логическая дверь</span>
+            <select id="bindDoor">
+              <option value="NEEDS_CLASSIFICATION">NEEDS CLASSIFICATION</option>
+              <option value="FRONT">FRONT</option>
+              <option value="REAR">REAR</option>
+              <option value="CUSTOM">CUSTOM</option>
+              <option value="IGNORE">IGNORE</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Профиль для камеры</span>
+            <select id="bindProfileSelect"></select>
+          </label>
+        </div>
+        <div class="compact-actions">
+          <button id="bindProfile" class="primary" type="button">Назначить</button>
+          <button id="resolveBinding" type="button">Проверить</button>
+        </div>
+        <div id="bindingStatus" class="config-note"></div>
+        <div id="bindingList" class="binding-list"></div>
       </div>
     </div>
 
@@ -302,18 +436,6 @@
         <p class="yml-hint">Меняются в application.yml и требуют перезапуска.</p>
       </details>
     </div>
-
-    <div class="sp-card">
-      <div class="summary">
-        <div class="sum-row"><span>Файл:</span><b id="sumFile">не выбран</b></div>
-        <div class="sum-row"><span>Зоны:</span><b id="sumLine">SALON 4 / STREET 4</b></div>
-        <div class="sum-row"><span>Генератор:</span><b id="sumSide">positive</b></div>
-        <div class="sum-row"><span>Нач. заполнение:</span><b id="sumInitial">авто</b></div>
-      </div>
-      <button id="btnStart" class="primary launch-btn" disabled>Запустить анализ →</button>
-      <button id="btnStop" class="danger launch-btn" disabled style="margin-top:8px;display:none">Остановить</button>
-      <div id="launchErr" class="launch-err hidden"></div>
-    </div>
   </div>
 </div>
 
@@ -340,7 +462,6 @@
 
     <aside class="side-panel">
       <div class="stats-grid">
-        <div class="stat boarding"><span>Вошло</span><strong id="statBoarding">0</strong></div>
         <div class="stat alighting"><span>Вышло</span><strong id="statAlighting">0</strong></div>
         <div class="stat onboard"><span>В салоне</span><strong id="statOnboard">0</strong></div>
         <div class="stat"><span>Начально</span><strong id="statInitial">0</strong></div>
@@ -376,6 +497,6 @@
   </section>
 </div>
 
-<script src="/app.js?v=20260707-1"></script>
+<script src="/app.js?v=20260710-1"></script>
 </body>
 </html>

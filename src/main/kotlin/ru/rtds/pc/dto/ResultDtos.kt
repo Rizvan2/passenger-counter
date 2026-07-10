@@ -8,6 +8,7 @@ data class AnalysisResultResponse(
     val videoDeviceId: String?,
     val recordDate: String?,
     val channel: Int?,
+    val cameraCode: String?,
     val eventCode: String?,
     val recordType: Int?,
     val clipStartedAtMs: Long?,
@@ -16,8 +17,14 @@ data class AnalysisResultResponse(
     val fileUid: Long?,
     val sourceHash: String?,
     val source: String,
+    val zoneProfileId: String?,
+    val zoneProfileName: String?,
+    val logicalDoor: String?,
     val status: String,
+    val totalExited: Int,
+    @Deprecated("Exit-only mode always reports zero boardings")
     val totalBoardings: Int,
+    @Deprecated("Use totalExited")
     val totalAlightings: Int,
     val finalOnboard: Int,
     val initialOnboard: Int,

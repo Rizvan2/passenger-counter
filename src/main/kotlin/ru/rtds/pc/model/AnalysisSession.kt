@@ -19,6 +19,9 @@ class AnalysisSession(
     initialOnboard: Int = 0,
     val source: VideoSource = VideoSource.MANUAL,
     val sourceHash: String? = null,
+    val zoneProfileId: String? = null,
+    val zoneProfileName: String? = null,
+    val logicalDoor: String? = null,
 ) {
     val lineYRatio: Float get() = (lineAyRatio + lineByRatio) / 2f
     val insideOnTop: Boolean get() = !insideOnPositiveSide

@@ -61,7 +61,7 @@ function renderList(filter) {
     el.innerHTML = `<span class="vitem-icon">🎥</span>
       <div style="min-width:0;flex:1">
         <div class="vitem-name" title="${esc(v.path)}">${esc(v.name)}</div>
-        <div class="vitem-meta">${fmtSize(v.sizeBytes)} · ${v.modified}</div>
+        <div class="vitem-meta">${esc(videoMetaLabel(v))}</div>
       </div>`;
     el.addEventListener("click", () => selectVideo(v));
     elList.appendChild(el);
@@ -71,9 +71,26 @@ function renderList(filter) {
 function selectVideo(v) {
   selectedPath = v.path;
   elPath.value = v.path;
+  fillCameraBindingFromVideo(v);
   document.querySelectorAll(".vitem").forEach((el) => el.classList.toggle("sel", el.dataset.path === v.path));
   onSelChange();
   loadPreview(v.path);
+}
+
+function videoMetaLabel(v) {
+  const parts = [fmtSize(v.sizeBytes), v.modified];
+  if (v.videoDeviceId || v.cameraCode) {
+    parts.push(`${v.videoDeviceId || "-"} / ${v.cameraCode || "-"}`);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+function fillCameraBindingFromVideo(v) {
+  if (elBindRecorderId && v.videoDeviceId) elBindRecorderId.value = v.videoDeviceId;
+  if (elBindCameraCode && v.cameraCode) elBindCameraCode.value = v.cameraCode;
+  if (v.videoDeviceId && v.cameraCode) {
+    resolveCurrentBinding();
+  }
 }
 
 function onSelChange() {
@@ -81,10 +98,6 @@ function onSelChange() {
   updateSummary();
 }
 
-const elLineRatio = $("lineRatio");
-const elLineLabel = $("lineLabel");
-const elInsideSide = $("insideSide");
-const elFlipSide = $("flipSide");
 const elAutoInit = $("autoInitial");
 const elManField = $("manualInitialField");
 const elInitOnb = $("initialOnboard");
@@ -95,18 +108,29 @@ const previewCtx = previewCv.getContext("2d");
 
 let lineSegment = { ax: 0.28, ay: 0.36, bx: 0.68, by: 0.68 };
 let insideOnPositiveSide = true;
-let zonePolygons = generatePolygonsFromLine();
+let zonePolygons = fallbackPolygonsFromLine();
 let selectedVertex = { zone: "salon", index: 0 };
 let dragState = null;
 let frameImg = null;
+let doorProfiles = [];
+let currentProfileLabel = "application-default";
+
+const elProfileSelect = $("profileSelect");
+const elProfileName = $("profileName");
+const elProfileDoorType = $("profileDoorType");
+const elBindRecorderId = $("bindRecorderId");
+const elBindCameraCode = $("bindCameraCode");
+const elBindDoor = $("bindDoor");
+const elBindProfileSelect = $("bindProfileSelect");
+const elBindingList = $("bindingList");
 
 if (![...elEditTarget.options].some((option) => option.value === "door")) {
   const doorOption = new Option("DOOR polygon", "door");
-  elEditTarget.insertBefore(doorOption, elEditTarget.querySelector('option[value="line"]'));
+  elEditTarget.appendChild(doorOption);
 }
 if (![...elEditTarget.options].some((option) => option.value === "salonSpawn")) {
   const spawnOption = new Option("SALON SPAWN polygon", "salonSpawn");
-  elEditTarget.insertBefore(spawnOption, elEditTarget.querySelector('option[value="line"]'));
+  elEditTarget.appendChild(spawnOption);
 }
 if ($("doorWidthLabel")?.previousElementSibling) $("doorWidthLabel").previousElementSibling.textContent = "DOOR";
 if ($("doorwayCount")?.previousElementSibling) $("doorwayCount").previousElementSibling.textContent = "В DOOR";
@@ -118,7 +142,6 @@ function applyDefaultSetup(info) {
   if (typeof info.defaultLineBy === "number") lineSegment.by = info.defaultLineBy;
   if (typeof info.defaultInsideOnPositiveSide === "boolean") {
     insideOnPositiveSide = info.defaultInsideOnPositiveSide;
-    elInsideSide.value = insideOnPositiveSide ? "bottom" : "top";
   }
   const salon = Array.isArray(info.defaultSalonPolygon) ? info.defaultSalonPolygon.map(clampPoint) : [];
   const street = Array.isArray(info.defaultStreetPolygon) ? info.defaultStreetPolygon.map(clampPoint) : [];
@@ -127,10 +150,8 @@ function applyDefaultSetup(info) {
   if (salon.length >= 3 && street.length >= 3 && door.length >= 3) {
     zonePolygons = { salon, street, door, salonSpawn: salonSpawn.length >= 3 ? salonSpawn : defaultSalonSpawnPolygon(salon) };
   } else {
-    zonePolygons = generatePolygonsFromLine();
+    zonePolygons = fallbackPolygonsFromLine();
   }
-  elLineRatio.value = Math.round(((lineSegment.ay + lineSegment.by) / 2) * 100);
-  elLineLabel.textContent = `${elLineRatio.value}%`;
   updateSummary();
   redrawPreview();
 }
@@ -142,25 +163,6 @@ function clampPoint(p) {
   };
 }
 
-elLineRatio.addEventListener("input", () => {
-  const ratio = parseInt(elLineRatio.value, 10) / 100;
-  lineSegment.ay = ratio;
-  lineSegment.by = ratio;
-  elLineLabel.textContent = `${elLineRatio.value}%`;
-  redrawPreview();
-});
-elInsideSide.addEventListener("change", () => {
-  insideOnPositiveSide = elInsideSide.value === "bottom";
-  updateSummary();
-  redrawPreview();
-});
-elFlipSide.addEventListener("click", () => {
-  insideOnPositiveSide = !insideOnPositiveSide;
-  elInsideSide.value = insideOnPositiveSide ? "bottom" : "top";
-  updateSummary();
-  redrawPreview();
-  redrawMonitor();
-});
 elAutoInit.addEventListener("change", () => {
   elManField.style.display = elAutoInit.checked ? "none" : "";
   updateSummary();
@@ -168,10 +170,18 @@ elAutoInit.addEventListener("change", () => {
 elInitOnb.addEventListener("input", updateSummary);
 $("addPoint").addEventListener("click", addPointToActivePolygon);
 $("deletePoint").addEventListener("click", deleteSelectedPoint);
-$("generatePolygons").addEventListener("click", () => {
-  zonePolygons = generatePolygonsFromLine();
-  updateSummary();
-  redrawPreview();
+$("reloadProfiles")?.addEventListener("click", () => loadDoorProfiles());
+$("saveProfile")?.addEventListener("click", () => saveCurrentProfile(false));
+$("updateProfile")?.addEventListener("click", () => saveCurrentProfile(true));
+$("bindProfile")?.addEventListener("click", bindSelectedProfile);
+$("resolveBinding")?.addEventListener("click", resolveCurrentBinding);
+elProfileSelect?.addEventListener("change", () => {
+  const profile = selectedDoorProfile();
+  if (!profile) return;
+  elProfileName.value = profile.name;
+  elProfileDoorType.value = profile.doorType || "CUSTOM";
+  applyDoorProfile(profile);
+  setProfileStatus(`Применен профиль ${profile.name}`, "ok");
 });
 
 previewWrap.addEventListener("mousedown", (e) => {
@@ -193,14 +203,10 @@ window.addEventListener("touchend", () => { dragState = null; });
 
 function beginDrag(clientX, clientY) {
   const target = elEditTarget.value;
-  if (target === "line") {
-    dragState = { type: "line", key: nearestLineEndpoint(clientX, clientY) };
-  } else {
-    const nearest = nearestPolygonVertex(target, clientX, clientY);
-    if (!nearest) return;
-    selectedVertex = { zone: target, index: nearest.index };
-    dragState = { type: "polygon", zone: target, index: nearest.index };
-  }
+  const nearest = nearestPolygonVertex(target, clientX, clientY);
+  if (!nearest) return;
+  selectedVertex = { zone: target, index: nearest.index };
+  dragState = { type: "polygon", zone: target, index: nearest.index };
   dragActive(clientX, clientY);
 }
 
@@ -208,23 +214,9 @@ function dragActive(clientX, clientY) {
   const r = previewWrap.getBoundingClientRect();
   const x = +Math.max(0.02, Math.min(0.98, (clientX - r.left) / r.width)).toFixed(3);
   const y = +Math.max(0.02, Math.min(0.98, (clientY - r.top) / r.height)).toFixed(3);
-  if (dragState.type === "line") {
-    lineSegment[dragState.key + "x"] = x;
-    lineSegment[dragState.key + "y"] = y;
-  } else {
-    zonePolygons[dragState.zone][dragState.index] = { x, y };
-  }
+  zonePolygons[dragState.zone][dragState.index] = { x, y };
   updateSummary();
   redrawPreview();
-}
-
-function nearestLineEndpoint(clientX, clientY) {
-  const r = previewWrap.getBoundingClientRect();
-  const ax = r.left + lineSegment.ax * r.width;
-  const ay = r.top + lineSegment.ay * r.height;
-  const bx = r.left + lineSegment.bx * r.width;
-  const by = r.top + lineSegment.by * r.height;
-  return Math.hypot(clientX - ax, clientY - ay) <= Math.hypot(clientX - bx, clientY - by) ? "a" : "b";
 }
 
 function nearestPolygonVertex(zone, clientX, clientY) {
@@ -241,7 +233,6 @@ function nearestPolygonVertex(zone, clientX, clientY) {
 
 function addPointToActivePolygon() {
   const zone = elEditTarget.value;
-  if (zone === "line") return;
   const polygon = zonePolygons[zone];
   const last = polygon[polygon.length - 1];
   const first = polygon[0];
@@ -257,7 +248,6 @@ function addPointToActivePolygon() {
 
 function deleteSelectedPoint() {
   const zone = elEditTarget.value;
-  if (zone === "line") return;
   const polygon = zonePolygons[zone];
   if (polygon.length <= 3) return;
   const index = selectedVertex.zone === zone ? selectedVertex.index : polygon.length - 1;
@@ -302,10 +292,9 @@ function redrawPreview() {
   previewCv.height = height;
   previewCtx.drawImage(img, 0, 0, width, height);
   drawZones(previewCtx, zonePolygons.salon, zonePolygons.street, zonePolygons.door, zonePolygons.salonSpawn, width, height, true);
-  drawGeneratorLine(previewCtx, width, height);
 }
 
-function generatePolygonsFromLine() {
+function fallbackPolygonsFromLine() {
   const frame = [
     { x: 0, y: 0 },
     { x: 1, y: 0 },
@@ -431,25 +420,6 @@ function drawPolygon(canvasCtx, polygon, width, height, fill, stroke, label, han
   canvasCtx.restore();
 }
 
-function drawGeneratorLine(canvasCtx, width, height) {
-  const ax = lineSegment.ax * width;
-  const ay = lineSegment.ay * height;
-  const bx = lineSegment.bx * width;
-  const by = lineSegment.by * height;
-  canvasCtx.save();
-  canvasCtx.strokeStyle = "#f6c85f";
-  canvasCtx.lineWidth = 2;
-  canvasCtx.setLineDash([7, 5]);
-  canvasCtx.beginPath();
-  canvasCtx.moveTo(ax, ay);
-  canvasCtx.lineTo(bx, by);
-  canvasCtx.stroke();
-  canvasCtx.setLineDash([]);
-  drawHandle(canvasCtx, ax, ay, elEditTarget.value === "line");
-  drawHandle(canvasCtx, bx, by, elEditTarget.value === "line");
-  canvasCtx.restore();
-}
-
 function drawHandle(canvasCtx, x, y, active) {
   canvasCtx.fillStyle = "#050608";
   canvasCtx.strokeStyle = active ? "#f6c85f" : "#c4cad6";
@@ -464,8 +434,225 @@ function updateSummary() {
   const name = selectedPath ? selectedPath.split(/[\\/]/).pop() : "не выбран";
   $("sumFile").textContent = name;
   $("sumLine").textContent = `SALON ${zonePolygons.salon.length} / STREET ${zonePolygons.street.length} / DOOR ${zonePolygons.door.length} / SPAWN ${zonePolygons.salonSpawn.length}`;
-  $("sumSide").textContent = insideOnPositiveSide ? "positive" : "negative";
+  $("sumProfile").textContent = currentProfileLabel;
   $("sumInitial").textContent = elAutoInit.checked ? "авто" : `${parseInt(elInitOnb.value, 10) || 0} чел.`;
+}
+
+async function apiJson(url, options = {}) {
+  const r = await fetch(url, options);
+  if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+  return r.status === 204 ? null : r.json();
+}
+
+function setProfileStatus(text, kind = "") {
+  const el = $("profileStatus");
+  if (!el) return;
+  el.textContent = text;
+  el.className = `config-note ${kind}`;
+}
+
+function setBindingStatus(text, kind = "") {
+  const el = $("bindingStatus");
+  if (!el) return;
+  el.textContent = text;
+  el.className = `config-note ${kind}`;
+}
+
+async function loadDoorProfiles(selectedId = null) {
+  if (!elProfileSelect || !elBindProfileSelect) return;
+  try {
+    doorProfiles = await apiJson("/api/door-config/profiles");
+    renderProfileSelects(selectedId);
+    await loadCameraBindings();
+    setProfileStatus(doorProfiles.length ? `Загружено профилей: ${doorProfiles.length}` : "Профилей пока нет");
+  } catch (e) {
+    setProfileStatus(`Ошибка загрузки профилей: ${e.message}`, "err");
+  }
+}
+
+function renderProfileSelects(selectedId = null) {
+  const previous = selectedId || elProfileSelect.value || elBindProfileSelect.value;
+  elProfileSelect.innerHTML = "";
+  elBindProfileSelect.innerHTML = "";
+  const empty = new Option("Нет сохраненных профилей", "");
+  empty.disabled = doorProfiles.length > 0;
+  elProfileSelect.appendChild(empty);
+  elBindProfileSelect.appendChild(new Option("Без профиля / fallback", ""));
+  for (const profile of doorProfiles) {
+    const label = `${profile.name} (${profile.doorType || "CUSTOM"})`;
+    elProfileSelect.appendChild(new Option(label, profile.id));
+    elBindProfileSelect.appendChild(new Option(label, profile.id));
+  }
+  if (previous && doorProfiles.some((p) => p.id === previous)) {
+    elProfileSelect.value = previous;
+    elBindProfileSelect.value = previous;
+  }
+  const profile = selectedDoorProfile();
+  if (profile) {
+    elProfileName.value = profile.name;
+    elProfileDoorType.value = profile.doorType || "CUSTOM";
+  }
+}
+
+function selectedDoorProfile() {
+  const id = elProfileSelect?.value;
+  return doorProfiles.find((p) => p.id === id) || null;
+}
+
+function currentProfilePayload() {
+  const name = (elProfileName?.value || "").trim();
+  if (!name) throw new Error("Введите имя профиля");
+  return {
+    name,
+    doorType: elProfileDoorType?.value || "CUSTOM",
+    lineYRatio: +(((lineSegment.ay + lineSegment.by) / 2).toFixed(3)),
+    lineAxRatio: lineSegment.ax,
+    lineAyRatio: lineSegment.ay,
+    lineBxRatio: lineSegment.bx,
+    lineByRatio: lineSegment.by,
+    salonPolygon: zonePolygons.salon.map(clampPoint),
+    streetPolygon: zonePolygons.street.map(clampPoint),
+    doorPolygon: zonePolygons.door.map(clampPoint),
+    salonSpawnPolygon: zonePolygons.salonSpawn.map(clampPoint),
+    insideOnTop: !insideOnPositiveSide,
+    insideOnPositiveSide,
+    autoInitialOnboard: elAutoInit.checked,
+    initialOnboard: elAutoInit.checked ? 0 : (parseInt(elInitOnb.value, 10) || 0),
+  };
+}
+
+async function saveCurrentProfile(updateExisting) {
+  try {
+    const body = currentProfilePayload();
+    const selectedId = elProfileSelect?.value;
+    const url = updateExisting && selectedId
+      ? `/api/door-config/profiles/${encodeURIComponent(selectedId)}`
+      : "/api/door-config/profiles";
+    const method = updateExisting && selectedId ? "PUT" : "POST";
+    const saved = await apiJson(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    currentProfileLabel = saved.name;
+    await loadDoorProfiles(saved.id);
+    updateSummary();
+    setProfileStatus(updateExisting && selectedId ? "Профиль перезаписан" : "Профиль сохранен", "ok");
+  } catch (e) {
+    setProfileStatus(e.message, "err");
+  }
+}
+
+function applyDoorProfile(profile) {
+  if (typeof profile.lineAxRatio === "number") lineSegment.ax = profile.lineAxRatio;
+  if (typeof profile.lineAyRatio === "number") lineSegment.ay = profile.lineAyRatio;
+  if (typeof profile.lineBxRatio === "number") lineSegment.bx = profile.lineBxRatio;
+  if (typeof profile.lineByRatio === "number") lineSegment.by = profile.lineByRatio;
+  if (typeof profile.lineYRatio === "number") {
+    if (typeof profile.lineAyRatio !== "number") lineSegment.ay = profile.lineYRatio;
+    if (typeof profile.lineByRatio !== "number") lineSegment.by = profile.lineYRatio;
+  }
+  if (typeof profile.insideOnPositiveSide === "boolean") {
+    insideOnPositiveSide = profile.insideOnPositiveSide;
+  } else if (typeof profile.insideOnTop === "boolean") {
+    insideOnPositiveSide = !profile.insideOnTop;
+  }
+
+  const salon = sanitizeProfilePolygon(profile.salonPolygon);
+  const street = sanitizeProfilePolygon(profile.streetPolygon);
+  const door = sanitizeProfilePolygon(profile.doorPolygon);
+  const salonSpawn = sanitizeProfilePolygon(profile.salonSpawnPolygon);
+  if (salon.length >= 3 && street.length >= 3) {
+    zonePolygons = {
+      salon,
+      street,
+      door: door.length >= 3 ? door : doorPortalPolygon(lineSegment),
+      salonSpawn: salonSpawn.length >= 3 ? salonSpawn : defaultSalonSpawnPolygon(salon),
+    };
+  }
+  elAutoInit.checked = profile.autoInitialOnboard !== false;
+  elManField.style.display = elAutoInit.checked ? "none" : "";
+  elInitOnb.value = profile.initialOnboard ?? 0;
+  currentProfileLabel = profile.name;
+  updateSummary();
+  redrawPreview();
+}
+
+function sanitizeProfilePolygon(points) {
+  return Array.isArray(points) ? points.map(clampPoint) : [];
+}
+
+async function loadCameraBindings() {
+  if (!elBindingList) return;
+  try {
+    const bindings = await apiJson("/api/door-config/bindings");
+    renderCameraBindings(bindings);
+  } catch (e) {
+    elBindingList.innerHTML = `<div class="vlist-empty">${esc(e.message)}</div>`;
+  }
+}
+
+function renderCameraBindings(bindings) {
+  const active = bindings.filter((b) => b.active).slice(0, 12);
+  if (!active.length) {
+    elBindingList.innerHTML = '<div class="vlist-empty">Привязок пока нет</div>';
+    return;
+  }
+  elBindingList.innerHTML = "";
+  for (const b of active) {
+    const row = document.createElement("div");
+    row.className = "binding-row";
+    const waiting = b.logicalDoor === "NEEDS_CLASSIFICATION";
+    const profileLabel = waiting ? "ожидает ручного выбора" : (b.profileName || "fallback");
+    row.innerHTML = `<div><b>${esc(b.recorderId)} / ${esc(b.cameraCode)}</b><span>${esc(profileLabel)} · ${esc(b.logicalDoor)}</span></div><em>${waiting ? "WAIT" : esc(b.logicalDoor)}</em>`;
+    row.addEventListener("click", () => {
+      elBindRecorderId.value = b.recorderId;
+      elBindCameraCode.value = b.cameraCode;
+      elBindDoor.value = b.logicalDoor === "NEEDS_CLASSIFICATION" ? "FRONT" : b.logicalDoor;
+      elBindProfileSelect.value = b.profileId || "";
+      setBindingStatus(waiting ? "Канал ожидает классификации: выбери FRONT/REAR/IGNORE и назначь профиль" : "", waiting ? "" : "ok");
+    });
+    elBindingList.appendChild(row);
+  }
+}
+
+async function bindSelectedProfile() {
+  try {
+    const recorderId = (elBindRecorderId?.value || "").trim();
+    const cameraCode = (elBindCameraCode?.value || "").trim();
+    if (!recorderId || !cameraCode) throw new Error("Введите регистратор и код камеры");
+    const logicalDoor = elBindDoor?.value || "CUSTOM";
+    const profileId = (logicalDoor === "IGNORE" || logicalDoor === "NEEDS_CLASSIFICATION") ? null : (elBindProfileSelect?.value || null);
+    const saved = await apiJson("/api/door-config/bindings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recorderId,
+        cameraCode,
+        logicalDoor,
+        profileId,
+        confirmedBy: "ui",
+        previewSourcePath: selectedPath || null,
+      }),
+    });
+    await loadCameraBindings();
+    setBindingStatus(`Назначено: ${saved.recorderId}/${saved.cameraCode} -> ${saved.profileName || saved.logicalDoor}`, "ok");
+  } catch (e) {
+    setBindingStatus(e.message, "err");
+  }
+}
+
+async function resolveCurrentBinding() {
+  try {
+    const recorderId = (elBindRecorderId?.value || "").trim();
+    const cameraCode = (elBindCameraCode?.value || "").trim();
+    if (!recorderId || !cameraCode) throw new Error("Введите регистратор и код камеры");
+    const resolved = await apiJson(`/api/door-config/resolve?recorderId=${encodeURIComponent(recorderId)}&cameraCode=${encodeURIComponent(cameraCode)}`);
+    const label = resolved.classificationNeeded ? "NEEDS_CLASSIFICATION" : (resolved.ignored ? "IGNORE" : resolved.profileName);
+    setBindingStatus(`Будет применен: ${label} (${resolved.source})`, resolved.classificationNeeded ? "" : (resolved.ignored ? "" : "ok"));
+  } catch (e) {
+    setBindingStatus(e.message, "err");
+  }
 }
 
 $("btnStart").addEventListener("click", startSession);
@@ -720,8 +907,8 @@ async function renderFrameMessage(msg, appendEvents) {
 }
 
 function updateFrameStats(msg) {
-  $("statBoarding").textContent = msg.boardings;
-  $("statAlighting").textContent = msg.alightings;
+  const exited = msg.exited ?? msg.alightings ?? 0;
+  $("statAlighting").textContent = exited;
   $("statOnboard").textContent = msg.onboard;
   $("statInitial").textContent = msg.initialOnboard;
   $("statTracks").textContent = msg.detections.length;
@@ -835,9 +1022,10 @@ function onFinished(msg) {
   elFinal.classList.remove("hidden");
   elFinal.classList.toggle("error", msg.status === "FAILED");
   const sec = (msg.durationMs / 1000).toFixed(1);
+  const exited = msg.totalExited ?? msg.totalAlightings ?? 0;
   elFinalText.innerHTML = msg.status === "FAILED"
     ? `<b>Ошибка:</b> ${msg.errorMessage || "неизвестная"}`
-    : `Кадров: <b>${msg.framesProcessed}</b>, время: <b>${sec} с</b>, вошло: <b>${msg.totalBoardings}</b>, вышло: <b>${msg.totalAlightings}</b>, в салоне: <b>${msg.finalOnboard}</b>`;
+    : `Кадров: <b>${msg.framesProcessed}</b>, время: <b>${sec} с</b>, вышло: <b>${exited}</b>, в салоне: <b>${msg.finalOnboard}</b>`;
   currentSessionId = null;
   $("btnStart").disabled = !selectedPath;
   $("btnStop").style.display = "none";
@@ -865,7 +1053,6 @@ function resetMonitor() {
   elFinal.classList.add("hidden");
   elFinal.classList.remove("error");
   [
-    "statBoarding",
     "statAlighting",
     "statOnboard",
     "statInitial",
@@ -897,4 +1084,5 @@ function esc(s) {
 }
 
 updateSummary();
+loadDoorProfiles();
 resetMonitor();

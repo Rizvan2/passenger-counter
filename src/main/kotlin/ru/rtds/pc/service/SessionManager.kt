@@ -29,6 +29,9 @@ class SessionManager {
         initialOnboard: Int,
         source: VideoSource = VideoSource.MANUAL,
         sourceHash: String? = null,
+        zoneProfileId: String? = null,
+        zoneProfileName: String? = null,
+        logicalDoor: String? = null,
     ): AnalysisSession {
         val id = UUID.randomUUID().toString()
         val videoMetadata = VideoMetadata.fromPath(videoPath)
@@ -49,6 +52,9 @@ class SessionManager {
             initialOnboard     = initialOnboard,
             source             = source,
             sourceHash         = sourceHash,
+            zoneProfileId      = zoneProfileId,
+            zoneProfileName    = zoneProfileName,
+            logicalDoor        = logicalDoor,
         )
         sessions[id] = s
         log.info("Created session {} for {} (source={})", id, videoPath, source)

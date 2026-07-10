@@ -60,12 +60,26 @@ class AnalysisResultEntity(
     @Column(name = "source", nullable = false, length = 16)
     var source: String = Source.MANUAL.name,
 
+    @Column(name = "zone_profile_id", length = 64)
+    var zoneProfileId: String? = null,
+
+    @Column(name = "zone_profile_name", length = 128)
+    var zoneProfileName: String? = null,
+
+    @Column(name = "logical_door", length = 32)
+    var logicalDoor: String? = null,
+
     @Column(name = "status", nullable = false, length = 32)
     var status: String = "",
 
+    @Column(name = "exited_count")
+    var exitedCount: Int = 0,
+
+    @Deprecated("Exit-only mode stores the canonical value in exited_count")
     @Column(name = "total_boardings", nullable = false)
     var totalBoardings: Int = 0,
 
+    @Deprecated("Use exited_count")
     @Column(name = "total_alightings", nullable = false)
     var totalAlightings: Int = 0,
 

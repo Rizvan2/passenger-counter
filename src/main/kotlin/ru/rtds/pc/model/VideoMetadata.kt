@@ -9,6 +9,7 @@ data class VideoMetadata(
     val videoDeviceId: String? = null,
     val recordDate: LocalDate? = null,
     val channel: Int? = null,
+    val cameraCode: String? = null,
     val eventCode: String? = null,
     val recordType: Int? = null,
     val clipStartedAt: Instant? = null,
@@ -33,6 +34,7 @@ data class VideoMetadata(
             val fileParts = fileName.substringBeforeLast('.').split('_')
             val channel = fileParts.getOrNull(0)?.toIntOrNull()
             val eventCode = fileParts.getOrNull(1)?.takeIf { it.isNotBlank() }
+            val cameraCode = eventCode ?: channel?.toString()
             val recordType = fileParts.getOrNull(2)?.toIntOrNull()
             val clipStartedAt = fileParts.getOrNull(3)?.toLongOrNull()?.let(Instant::ofEpochSecond)
             val clipFinishedAt = fileParts.getOrNull(4)?.toLongOrNull()?.let(Instant::ofEpochSecond)
@@ -44,6 +46,7 @@ data class VideoMetadata(
                 videoDeviceId = videoDeviceId,
                 recordDate = recordDate,
                 channel = channel,
+                cameraCode = cameraCode,
                 eventCode = eventCode,
                 recordType = recordType,
                 clipStartedAt = clipStartedAt,
