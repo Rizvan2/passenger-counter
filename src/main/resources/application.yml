@@ -29,7 +29,7 @@ ftp:
   home: ./videos/incoming
   processed-dir: ./videos/processed
   passive:
-    ports: 30000-30010
+    ports: 30000
     external-address: ""
   keep-after-analysis: true
   analysis:
