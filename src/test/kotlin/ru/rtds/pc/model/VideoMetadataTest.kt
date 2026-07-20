@@ -24,6 +24,29 @@ class VideoMetadataTest {
     }
 
     @Test
+    fun `extracts variable-length numeric video device id`() {
+        val metadata = VideoMetadata.fromPath(
+            "/app/ftp/incoming/4862404199/2026-07-20/0000_00140000_1_1784563451_1784563475_0_2865392_0.avi",
+        )
+
+        assertEquals("4862404199", metadata.videoDeviceId)
+        assertEquals(
+            "4862404199/2026-07-20/0000_00140000_1_1784563451_1784563475_0_2865392_0.avi",
+            metadata.originalRelativePath,
+        )
+        assertEquals(LocalDate.parse("2026-07-20"), metadata.recordDate)
+    }
+
+    @Test
+    fun `does not treat unrelated numeric parent directory as video device id`() {
+        val metadata = VideoMetadata.fromPath(
+            "/archive/123/other/4862404199/2026-07-20/0000_EVT_1_1784563451_1784563475_0_42.avi",
+        )
+
+        assertEquals("4862404199", metadata.videoDeviceId)
+    }
+
+    @Test
     fun `keeps video device empty when path does not contain ftp folder structure`() {
         val metadata = VideoMetadata.fromPath("C:/videos/manual-upload.mp4")
 

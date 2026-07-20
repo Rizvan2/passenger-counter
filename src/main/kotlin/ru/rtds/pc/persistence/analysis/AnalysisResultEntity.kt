@@ -23,7 +23,7 @@ class AnalysisResultEntity(
     @Column(name = "video_name", nullable = false, length = 512)
     var videoName: String = "",
 
-    @Column(name = "device_id", length = 32)
+    @Column(name = "device_id", length = 64)
     var videoDeviceId: String? = null,
 
     @Column(name = "record_date", length = 16)

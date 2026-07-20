@@ -18,7 +18,7 @@ data class VideoMetadata(
     val fileUid: Long? = null,
 ) {
     companion object {
-        private val videoDeviceIdPattern = Regex("\\d{12}")
+        private val videoDeviceIdPattern = Regex("\\d{1,64}")
         private val recordDatePattern = Regex("\\d{4}-\\d{2}-\\d{2}")
 
         fun fromPath(sourcePath: String): VideoMetadata {
@@ -26,10 +26,11 @@ data class VideoMetadata(
             val fileName = path?.fileName?.toString() ?: sourcePath.substringAfterLast('/', sourcePath)
             val pathSegments = path?.map { it.toString() }.orEmpty()
 
-            val videoDeviceId = pathSegments.firstOrNull { it.matches(videoDeviceIdPattern) }
-            val recordDate = pathSegments.firstOrNull { it.matches(recordDatePattern) }
+            val deviceIndex = findDeviceIndex(pathSegments)
+            val videoDeviceId = deviceIndex?.let(pathSegments::get)
+            val recordDate = deviceIndex?.let { pathSegments.getOrNull(it + 1) }
                 ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-            val relativePath = buildRelativePath(pathSegments, fileName)
+            val relativePath = buildRelativePath(pathSegments, fileName, deviceIndex)
 
             val fileParts = fileName.substringBeforeLast('.').split('_')
             val channel = fileParts.getOrNull(0)?.toIntOrNull()
@@ -58,9 +59,18 @@ data class VideoMetadata(
 
         private fun normalizeSeparators(path: String): String = path.replace('\\', '/')
 
-        private fun buildRelativePath(pathSegments: List<String>, fileName: String): String? {
-            val deviceIndex = pathSegments.indexOfFirst { it.matches(videoDeviceIdPattern) }
-            if (deviceIndex < 0) return null
+        private fun findDeviceIndex(pathSegments: List<String>): Int? =
+            pathSegments.indices.firstOrNull { index ->
+                pathSegments[index].matches(videoDeviceIdPattern) &&
+                    pathSegments.getOrNull(index + 1)?.matches(recordDatePattern) == true
+            }
+
+        private fun buildRelativePath(
+            pathSegments: List<String>,
+            fileName: String,
+            deviceIndex: Int?,
+        ): String? {
+            if (deviceIndex == null) return null
 
             val relevantSegments = pathSegments.drop(deviceIndex)
             if (relevantSegments.isEmpty()) return fileName

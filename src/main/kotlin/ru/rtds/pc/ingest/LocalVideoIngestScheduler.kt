@@ -22,7 +22,7 @@ class LocalVideoIngestScheduler(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val videoExtensions = setOf("avi", "mp4", "mov", "mkv", "m4v")
-    private val deviceIdPattern = Regex("\\d{12}")
+    private val deviceIdPattern = Regex("\\d{1,64}")
     private val recordDatePattern = Regex("\\d{4}-\\d{2}-\\d{2}")
 
     @Scheduled(fixedDelayString = "\${pc.local-ingest.scan-interval-ms:15000}", initialDelayString = "5000")
