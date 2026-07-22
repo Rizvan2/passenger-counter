@@ -51,7 +51,7 @@ class AnalysisResultQueryService(
             videoDeviceId = entity.videoDeviceId,
             recordDate = entity.recordDate,
             channel = entity.channel,
-            cameraCode = entity.eventCode ?: entity.channel?.toString(),
+            cameraCode = entity.channel?.toString() ?: entity.eventCode,
             eventCode = entity.eventCode,
             recordType = entity.recordType,
             clipStartedAtMs = entity.clipStartedAtMs,

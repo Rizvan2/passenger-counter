@@ -15,6 +15,7 @@ class VideoMetadataTest {
         assertEquals("088037000054/2026-06-20/2_EVT_1_1718860000_1718860060_0_42.avi", metadata.originalRelativePath)
         assertEquals(LocalDate.parse("2026-06-20"), metadata.recordDate)
         assertEquals(2, metadata.channel)
+        assertEquals("2", metadata.cameraCode)
         assertEquals("EVT", metadata.eventCode)
         assertEquals(1, metadata.recordType)
         assertEquals(Instant.ofEpochSecond(1718860000), metadata.clipStartedAt)
@@ -35,6 +36,24 @@ class VideoMetadataTest {
             metadata.originalRelativePath,
         )
         assertEquals(LocalDate.parse("2026-07-20"), metadata.recordDate)
+        assertEquals(0, metadata.channel)
+        assertEquals("0", metadata.cameraCode)
+        assertEquals("00140000", metadata.eventCode)
+    }
+
+    @Test
+    fun `uses physical channel instead of changing event code as camera code`() {
+        val first = VideoMetadata.fromPath(
+            "4862404199/2026-07-22/0001_00240201_1_1784725453_1784725480_0_3858580_0.avi",
+        )
+        val second = VideoMetadata.fromPath(
+            "4862404199/2026-07-22/0001_00250200_1_1784725684_1784725704_0_2065037_0.avi",
+        )
+
+        assertEquals("1", first.cameraCode)
+        assertEquals("1", second.cameraCode)
+        assertEquals("00240201", first.eventCode)
+        assertEquals("00250200", second.eventCode)
     }
 
     @Test
