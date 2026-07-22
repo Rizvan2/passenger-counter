@@ -111,7 +111,9 @@
     }
     .vitem:hover { background: #1e222a; }
     .vitem.sel { background: rgba(79,125,243,.1); border-color: #4f7df3; }
+    .vitem.unavailable { opacity: .72; }
     .vitem-icon { font-size: 16px; flex-shrink: 0; }
+    .vitem-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
     .vitem-name {
       font-size: 13px;
       font-weight: 600;
@@ -120,6 +122,22 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .vitem-folder {
+      flex-shrink: 0;
+      max-width: 135px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: rgba(79,125,243,.12);
+      color: #79a7ff;
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .25px;
+    }
+    .vitem.unavailable .vitem-folder { background: rgba(246,200,95,.1); color: #f6c85f; }
     .vitem.sel .vitem-name { color: #79a7ff; }
     .vitem-meta { font-size: 11px; color: #5b6672; margin-top: 1px; }
     .manual-row { border-top: 1px solid #292e38; padding-top: 12px; margin-top: 10px; }
@@ -497,6 +515,6 @@
   </section>
 </div>
 
-<script src="/app.js?v=20260710-1"></script>
+<script src="/app.js?v=20260722-1"></script>
 </body>
 </html>

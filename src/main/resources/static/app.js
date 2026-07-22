@@ -26,12 +26,14 @@ const elPath = $("videoPath");
 
 let allVideos = [];
 let selectedPath = "";
+let selectedVideo = null;
 
 loadVideos();
 elSearch.addEventListener("input", () => renderList(elSearch.value.trim().toLowerCase()));
 elRefresh.addEventListener("click", loadVideos);
 elPath.addEventListener("input", () => {
   selectedPath = elPath.value.trim();
+  selectedVideo = allVideos.find((v) => v.path === selectedPath) || null;
   onSelChange();
 });
 
@@ -41,6 +43,7 @@ async function loadVideos() {
     const r = await fetch("/api/videos");
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     allVideos = await r.json();
+    selectedVideo = allVideos.find((v) => v.path === selectedPath) || null;
     renderList(elSearch.value.trim().toLowerCase());
   } catch (e) {
     elList.innerHTML = `<div class="vlist-empty">Ошибка: ${e.message}</div>`;
@@ -48,7 +51,11 @@ async function loadVideos() {
 }
 
 function renderList(filter) {
-  const items = filter ? allVideos.filter((v) => v.name.toLowerCase().includes(filter)) : allVideos;
+  const items = filter
+    ? allVideos.filter((v) => [v.name, v.folder, v.relativePath, v.videoDeviceId, v.cameraCode]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(filter)))
+    : allVideos;
   if (!items.length) {
     elList.innerHTML = '<div class="vlist-empty">Файлы не найдены</div>';
     return;
@@ -56,11 +63,14 @@ function renderList(filter) {
   elList.innerHTML = "";
   for (const v of items) {
     const el = document.createElement("div");
-    el.className = "vitem" + (v.path === selectedPath ? " sel" : "");
+    el.className = "vitem" + (v.path === selectedPath ? " sel" : "") + (!v.previewAvailable ? " unavailable" : "");
     el.dataset.path = v.path;
     el.innerHTML = `<span class="vitem-icon">🎥</span>
       <div style="min-width:0;flex:1">
-        <div class="vitem-name" title="${esc(v.path)}">${esc(v.name)}</div>
+        <div class="vitem-head">
+          <div class="vitem-name" title="${esc(v.path)}">${esc(v.name)}</div>
+          <span class="vitem-folder" title="${esc(v.relativePath || v.path)}">${esc(v.folder || "Видео")}</span>
+        </div>
         <div class="vitem-meta">${esc(videoMetaLabel(v))}</div>
       </div>`;
     el.addEventListener("click", () => selectVideo(v));
@@ -70,11 +80,16 @@ function renderList(filter) {
 
 function selectVideo(v) {
   selectedPath = v.path;
+  selectedVideo = v;
   elPath.value = v.path;
   fillCameraBindingFromVideo(v);
   document.querySelectorAll(".vitem").forEach((el) => el.classList.toggle("sel", el.dataset.path === v.path));
   onSelChange();
-  loadPreview(v.path);
+  if (v.previewAvailable) {
+    loadPreview(v.path);
+  } else {
+    showPreviewUnavailable(v.issue || "Превью для этого файла недоступно");
+  }
 }
 
 function videoMetaLabel(v) {
@@ -82,6 +97,7 @@ function videoMetaLabel(v) {
   if (v.videoDeviceId || v.cameraCode) {
     parts.push(`${v.videoDeviceId || "-"} / ${v.cameraCode || "-"}`);
   }
+  if (v.issue) parts.push(v.issue);
   return parts.filter(Boolean).join(" · ");
 }
 
@@ -94,7 +110,11 @@ function fillCameraBindingFromVideo(v) {
 }
 
 function onSelChange() {
-  $("btnStart").disabled = !selectedPath || !!currentSessionId;
+  const analysisBlocked = selectedVideo && !selectedVideo.analysisAvailable;
+  $("btnStart").disabled = !selectedPath || !!currentSessionId || analysisBlocked;
+  $("btnStart").title = analysisBlocked
+    ? (selectedVideo.issue || "Этот служебный файл нельзя запускать повторно")
+    : "";
   updateSummary();
 }
 
@@ -257,7 +277,16 @@ function deleteSelectedPoint() {
   redrawPreview();
 }
 
+function showPreviewUnavailable(message) {
+  frameImg = null;
+  previewCtx.clearRect(0, 0, previewCv.width, previewCv.height);
+  $("previewSpin").classList.add("hidden");
+  $("previewPh").textContent = message;
+  $("previewPh").classList.remove("hidden");
+}
+
 async function loadPreview(path) {
+  $("previewPh").textContent = "Превью недоступно";
   $("previewPh").classList.add("hidden");
   $("previewSpin").classList.remove("hidden");
   frameImg = null;
@@ -279,9 +308,7 @@ async function loadPreview(path) {
     };
     img.src = `data:image/jpeg;base64,${data.frameJpegBase64}`;
   } catch (e) {
-    $("previewSpin").classList.add("hidden");
-    $("previewPh").classList.remove("hidden");
-    $("previewPh").textContent = `Превью недоступно: ${e.message}`;
+    showPreviewUnavailable(`Превью недоступно: ${e.message}`);
   }
 }
 
@@ -660,6 +687,11 @@ $("btnStop").addEventListener("click", stopSession);
 
 async function startSession() {
   if (!selectedPath) return;
+  if (selectedVideo && !selectedVideo.analysisAvailable) {
+    $("launchErr").textContent = selectedVideo.issue || "Этот файл нельзя запустить на анализ";
+    $("launchErr").classList.remove("hidden");
+    return;
+  }
   $("btnStart").disabled = true;
   $("btnStop").style.display = "block";
   $("btnStop").disabled = false;
@@ -696,7 +728,7 @@ async function startSession() {
   } catch (e) {
     $("launchErr").textContent = e.message;
     $("launchErr").classList.remove("hidden");
-    $("btnStart").disabled = false;
+    onSelChange();
     $("btnStop").style.display = "none";
     setStatus("ошибка", "error");
   }
@@ -863,7 +895,7 @@ function openWebSocket(path) {
   };
   currentWs.onerror = () => setStatus("ошибка ws", "error");
   currentWs.onclose = () => {
-    $("btnStart").disabled = !selectedPath;
+    onSelChange();
     $("btnStop").disabled = true;
   };
 }
@@ -1027,7 +1059,7 @@ function onFinished(msg) {
     ? `<b>Ошибка:</b> ${msg.errorMessage || "неизвестная"}`
     : `Кадров: <b>${msg.framesProcessed}</b>, время: <b>${sec} с</b>, вышло: <b>${exited}</b>, в салоне: <b>${msg.finalOnboard}</b>`;
   currentSessionId = null;
-  $("btnStart").disabled = !selectedPath;
+  onSelChange();
   $("btnStop").style.display = "none";
   $("btnStop").disabled = true;
 }
