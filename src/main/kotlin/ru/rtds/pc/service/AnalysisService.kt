@@ -4,6 +4,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
+import ru.rtds.pc.config.SmartStopProperties
 import ru.rtds.pc.dto.BoxDto
 import ru.rtds.pc.dto.FrameUpdateDto
 import ru.rtds.pc.dto.PassengerEventDto
@@ -33,6 +34,7 @@ class AnalysisService(
     private val wsHandler: AnalysisWebSocketHandler,
     private val analysisResultPersistenceService: AnalysisResultPersistenceService,
     private val uploadedVideoCleanupService: UploadedVideoCleanupService,
+    private val smartStopProperties: SmartStopProperties,
     @Value("\${pc.process-every-n-frames}") private val processEveryN: Int,
     @Value("\${pc.detector:person}") private val detectorMode: String,
     @Value("\${pc.emit-frame-every-ms}") private val emitEveryMs: Long,
@@ -80,6 +82,7 @@ class AnalysisService(
             log.error("Analysis failed for session {}: {}", session.id, e.message, e)
             session.status = SessionStatus.FAILED
             session.errorMessage = e.message
+            session.finishReason = "ANALYSIS_ERROR"
         } finally {
             session.finishedAt = System.currentTimeMillis()
             sendFinished(session)
@@ -104,6 +107,7 @@ class AnalysisService(
         val alightingLocks = mutableListOf<AlightingLock>()
         val suppressedAlightingTrackIds = mutableSetOf<Int>()
         var lastProcessedFrameIdx = 0
+        val smartStopAnalyzer = SmartStopAnalyzer(smartStopProperties, session.smartStopEnabled)
         log.info(
             "Analysis started: session={}, file='{}', detector={}, inputSize={}, processEveryN={}, salonPoints={}, streetPoints={}, doorPoints={}",
             session.id,
@@ -116,10 +120,17 @@ class AnalysisService(
             session.doorPolygon.size,
         )
 
-        val ok = frameReader.process(session.sourcePath, skipFrames = processEveryN - 1) { frameIdx, img, w, h ->
+        val ok = frameReader.process(
+            sourcePath = session.sourcePath,
+            skipFrames = processEveryN - 1,
+            onStreamInfo = { streamInfo ->
+                session.sourceFps = streamInfo.framesPerSecond
+            },
+        ) { frameIdx, img, w, h ->
             lastProcessedFrameIdx = frameIdx
             if (session.stopRequested) {
                 session.status = SessionStatus.STOPPED
+                session.finishReason = "USER_STOP"
                 return@process false
             }
 
@@ -208,19 +219,52 @@ class AnalysisService(
                 )
             }
 
+            val frameHasPassengerEvent = pendingEvents.any { it.frameIndex == frameIdx }
+            val doorwayPassengerVisible = tracks.any { track ->
+                track.framesSinceUpdate == 0 && (
+                    track.isInDoor ||
+                        countingZones.inDoor(
+                            track.detection.anchorX(countAnchorXRatio),
+                            track.detection.anchorY(countAnchorYRatio),
+                        )
+                    )
+            }
+            val smartStop = smartStopAnalyzer.update(
+                image = img,
+                frameIndex = frameIdx,
+                sourceFps = session.sourceFps,
+                doorPolygon = session.doorPolygon,
+                streetPolygon = session.streetPolygon,
+                passengerActivity = doorwayPassengerVisible,
+                passengerEvent = frameHasPassengerEvent,
+            )
+            session.smartStopSnapshot = smartStop
             session.framesProcessed++
 
             val now = System.currentTimeMillis()
-            if (now - lastEmittedMs >= emitEveryMs) {
+            if (now - lastEmittedMs >= emitEveryMs || smartStop.stopTriggered) {
                 emit(session, frameIdx, img, w, h, tracks, countingZones, pendingEvents.toList())
                 pendingEvents.clear()
                 lastEmittedMs = now
+            }
+            if (smartStop.stopTriggered) {
+                session.status = SessionStatus.FINISHED
+                session.finishReason = smartStop.finishReason
+                log.info(
+                    "Smart stop confirmed: session={}, frame={}, videoTime={}s, reason={}",
+                    session.id,
+                    frameIdx,
+                    "%.1f".format(smartStop.videoTimeSeconds),
+                    smartStop.finishReason,
+                )
+                return@process false
             }
             true
         }
 
         if (session.status == SessionStatus.RUNNING) {
             session.status = if (ok) SessionStatus.FINISHED else SessionStatus.FAILED
+            session.finishReason = if (ok) "END_OF_FILE" else "FRAME_READER_STOP"
         }
 
         // Pass 2: exit-only offline classification reconciles full trajectories with the
@@ -694,6 +738,8 @@ class AnalysisService(
                 doorwayDetections = session.doorwayDetections,
                 outsideDetections = session.outsideDetections,
                 fps = fps,
+                sourceFps = session.sourceFps.toFloat(),
+                smartStop = session.smartStopSnapshot,
             )
         )
     }
@@ -710,6 +756,8 @@ class AnalysisService(
                 framesProcessed = session.framesProcessed,
                 durationMs = session.durationMs(),
                 errorMessage = session.errorMessage,
+                finishReason = session.finishReason,
+                smartStop = session.smartStopSnapshot,
             )
         )
     }

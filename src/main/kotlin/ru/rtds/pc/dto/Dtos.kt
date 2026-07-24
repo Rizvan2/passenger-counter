@@ -5,6 +5,7 @@ import jakarta.validation.constraints.DecimalMax
 import jakarta.validation.constraints.DecimalMin
 import jakarta.validation.constraints.NotBlank
 import ru.rtds.pc.model.NormalizedPoint
+import ru.rtds.pc.model.SmartStopSnapshot
 
 data class StartSessionRequest(
     @field:NotBlank(message = "Путь к видео обязателен")
@@ -43,6 +44,8 @@ data class StartSessionRequest(
     val autoInitialOnboard: Boolean = true,
 
     val initialOnboard: Int = 0,
+
+    val smartStopEnabled: Boolean? = null,
 ) {
     fun resolvedLineAx(): Float = lineAx ?: 0f
     fun resolvedLineAy(): Float = lineAy ?: (lineYRatio ?: 0.5f)
@@ -74,6 +77,8 @@ data class SessionStatusResponse(
     val totalAlightings: Int,
     val currentOnboard: Int,
     val errorMessage: String?,
+    val finishReason: String?,
+    val smartStop: SmartStopSnapshot,
 )
 
 data class FrameUpdateDto(
@@ -116,6 +121,8 @@ data class FrameUpdateDto(
     val doorwayDetections: Int,
     val outsideDetections: Int,
     val fps: Float,
+    val sourceFps: Float,
+    val smartStop: SmartStopSnapshot,
 )
 
 data class LinePointDto(
@@ -159,4 +166,6 @@ data class SessionFinishedDto(
     val framesProcessed: Int,
     val durationMs: Long,
     val errorMessage: String?,
+    val finishReason: String?,
+    val smartStop: SmartStopSnapshot,
 )

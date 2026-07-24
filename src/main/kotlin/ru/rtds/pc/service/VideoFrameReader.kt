@@ -21,6 +21,12 @@ data class VideoFrameSnapshot(
     val height: Int,
 )
 
+data class VideoStreamInfo(
+    val framesPerSecond: Double,
+    val estimatedFrameCount: Int,
+    val durationSeconds: Double,
+)
+
 @Service
 class VideoFrameReader(
     // Минимальный размер стороны кадра для анализа.
@@ -34,6 +40,7 @@ class VideoFrameReader(
     fun process(
         sourcePath: String,
         skipFrames: Int = 2,
+        onStreamInfo: (VideoStreamInfo) -> Unit = {},
         onFrame: (frameIndex: Int, image: BufferedImage, width: Int, height: Int) -> Boolean,
     ): Boolean {
         val grabber = FFmpegFrameGrabber(sourcePath)
@@ -49,17 +56,27 @@ class VideoFrameReader(
             val scale = upscaleRatio(origW, origH)
             val outW = (origW * scale).toInt()
             val outH = (origH * scale).toInt()
+            val sourceFps = grabber.frameRate.takeIf { it.isFinite() && it > 0.0 } ?: 25.0
+            val estimatedFrameCount = grabber.lengthInVideoFrames.coerceAtLeast(0)
+            val durationSeconds = if (estimatedFrameCount > 0) estimatedFrameCount / sourceFps else 0.0
+            onStreamInfo(
+                VideoStreamInfo(
+                    framesPerSecond = sourceFps,
+                    estimatedFrameCount = estimatedFrameCount,
+                    durationSeconds = durationSeconds,
+                ),
+            )
 
             if (scale > 1.0f) {
                 log.info(
                     "Opened: {} ({}x{} @ {} fps) — upscaling to {}x{} (ratio={}) for analysis",
-                    sourcePath, origW, origH, grabber.frameRate, outW, outH,
+                    sourcePath, origW, origH, sourceFps, outW, outH,
                     "%.2f".format(scale),
                 )
             } else {
                 log.info(
                     "Opened: {} ({}x{} @ {} fps)",
-                    sourcePath, origW, origH, grabber.frameRate,
+                    sourcePath, origW, origH, sourceFps,
                 )
             }
 

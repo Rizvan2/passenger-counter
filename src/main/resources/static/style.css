@@ -322,8 +322,131 @@ canvas {
 .stat.onboard strong { color: #f6c85f; }
 
 .zone-card,
-.events-card {
+.events-card,
+.sensor-card {
   padding: 14px;
+}
+
+.sensor-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sensor-phase {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: #252a34;
+  color: #9aa3b2;
+  font-size: 10px;
+  letter-spacing: .35px;
+}
+
+.door-state-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid #303642;
+  border-radius: 6px;
+  background: #1f232b;
+}
+
+.sensor-caption {
+  display: block;
+  margin-bottom: 5px;
+  color: #9aa3b2;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.door-state {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.door-state.open { color: #75e3ae; }
+.door-state.closed { color: #ff8b8b; }
+.door-state.unknown { color: #f6c85f; }
+
+.confidence-ring {
+  min-width: 76px;
+  text-align: right;
+}
+
+.confidence-ring strong {
+  display: block;
+  color: #f4f6f8;
+  font-size: 18px;
+}
+
+.confidence-ring span {
+  color: #6b7585;
+  font-size: 10px;
+}
+
+.metric-progress {
+  height: 4px;
+  margin: 9px 0 12px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #2b3039;
+}
+
+.metric-progress-value {
+  width: 0;
+  height: 100%;
+  background: #f6c85f;
+  transition: width .15s, background .15s;
+}
+
+.sensor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #292e38;
+  border-radius: 6px;
+  background: #292e38;
+}
+
+.sensor-grid > div {
+  min-width: 0;
+  padding: 8px 9px;
+  background: #171a20;
+}
+
+.sensor-grid span {
+  display: block;
+  overflow: hidden;
+  color: #707a89;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sensor-grid b {
+  display: block;
+  margin-top: 2px;
+  color: #cdd3dd;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sensor-grid b.yes { color: #75e3ae; }
+.sensor-grid b.alert { color: #ff8b8b; }
+
+.sensor-hint {
+  margin-top: 10px;
+  padding: 8px 9px;
+  border-radius: 5px;
+  background: rgba(246, 200, 95, .07);
+  color: #b7a777;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .panel-title {

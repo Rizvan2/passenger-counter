@@ -22,6 +22,7 @@ class AnalysisSession(
     val zoneProfileId: String? = null,
     val zoneProfileName: String? = null,
     val logicalDoor: String? = null,
+    val smartStopEnabled: Boolean = true,
 ) {
     val lineYRatio: Float get() = (lineAyRatio + lineByRatio) / 2f
     val insideOnTop: Boolean get() = !insideOnPositiveSide
@@ -29,6 +30,9 @@ class AnalysisSession(
     @Volatile var stopRequested: Boolean = false
     @Volatile var status: SessionStatus = SessionStatus.RUNNING
     @Volatile var errorMessage: String? = null
+    @Volatile var finishReason: String? = null
+    @Volatile var smartStopSnapshot: SmartStopSnapshot = SmartStopSnapshot(enabled = smartStopEnabled)
+    @Volatile var sourceFps: Double = 25.0
 
     val totalBoardings = AtomicInteger(0)
     val totalAlightings = AtomicInteger(0)

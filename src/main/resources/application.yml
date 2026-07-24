@@ -152,6 +152,25 @@ pc:
   native-head-max-area-ratio: 0.08
   native-head-ignore-left-top-x: 0.30
   native-head-ignore-left-top-y: 0.36
+  smart-stop:
+    enabled: true
+    # The first stable, unobstructed doorway samples after passenger activity
+    # become the visual reference for an open door.
+    calibration-samples: 6
+    require-passenger-activity-for-calibration: true
+    min-analysis-seconds: 8
+    door-open-max-difference: 0.10
+    door-closed-min-difference: 0.22
+    door-stable-motion-max: 0.30
+    door-close-confirm-seconds: 4
+    door-clear-seconds: 2
+    inactivity-seconds: 30
+    scene-motion-threshold: 0.14
+    vehicle-motion-confirm-seconds: 5
+    motion-fallback-enabled: true
+    post-roll-seconds: 3
+    # 0 disables the hard time limit. Enable only after validation on production clips.
+    max-analysis-seconds: 0
   head-tracking:
     enabled: false
     height-ratio: 0.28

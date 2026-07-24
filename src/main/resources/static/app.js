@@ -121,6 +121,7 @@ function onSelChange() {
 const elAutoInit = $("autoInitial");
 const elManField = $("manualInitialField");
 const elInitOnb = $("initialOnboard");
+const elSmartStop = $("smartStopEnabled");
 const elEditTarget = $("editTarget");
 const previewWrap = $("previewWrap");
 const previewCv = $("previewCanvas");
@@ -188,6 +189,7 @@ elAutoInit.addEventListener("change", () => {
   updateSummary();
 });
 elInitOnb.addEventListener("input", updateSummary);
+elSmartStop.addEventListener("change", updateSummary);
 $("addPoint").addEventListener("click", addPointToActivePolygon);
 $("deletePoint").addEventListener("click", deleteSelectedPoint);
 $("reloadProfiles")?.addEventListener("click", () => loadDoorProfiles());
@@ -713,6 +715,7 @@ async function startSession() {
       salonSpawnPolygon: zonePolygons.salonSpawn,
       autoInitialOnboard: elAutoInit.checked,
       initialOnboard: elAutoInit.checked ? 0 : (parseInt(elInitOnb.value, 10) || 0),
+      smartStopEnabled: elSmartStop.checked,
     };
     const r = await fetch("/api/sessions", {
       method: "POST",
@@ -765,6 +768,7 @@ let timelinePos = 0;
 let followLive = true;
 let displayToken = 0;
 let processedFrames = 0;
+let sourceFramesPerSecond = 25;
 
 elTimeline.addEventListener("input", () => {
   followLive = false;
@@ -812,6 +816,9 @@ function storeFrame(msg) {
   }
   frameBuffer.set(msg.frameIndex, msg);
   processedFrames = Math.max(processedFrames, msg.frameIndex + 1);
+  if (Number.isFinite(msg.sourceFps) && msg.sourceFps > 0) {
+    sourceFramesPerSecond = msg.sourceFps;
+  }
   updateTimelineUi();
 }
 
@@ -844,7 +851,7 @@ function updateTimelineMeta() {
 }
 
 function formatClock(frameIndex) {
-  const fps = 25;
+  const fps = sourceFramesPerSecond || 25;
   const totalSec = Math.max(0, Math.floor(frameIndex / fps));
   const mm = String(Math.floor(totalSec / 60)).padStart(2, "0");
   const ss = String(totalSec % 60).padStart(2, "0");
@@ -878,6 +885,11 @@ fetch("/api/sessions/info")
     if (info.countAnchorYRatio) $("pParamAnchor").textContent = info.countAnchorYRatio;
     if (info.minAnchorMovement) $("pParamMovement").textContent = info.minAnchorMovement;
     if (info.confidenceThreshold) $("pParamConf").textContent = info.confidenceThreshold;
+    if (typeof info.smartStopEnabled === "boolean") elSmartStop.checked = info.smartStopEnabled;
+    if (info.smartStopDoorCloseConfirmSeconds != null) $("pParamDoorClose").textContent = info.smartStopDoorCloseConfirmSeconds;
+    if (info.smartStopInactivitySeconds != null) $("pParamInactivity").textContent = info.smartStopInactivitySeconds;
+    if (info.smartStopVehicleMotionConfirmSeconds != null) $("pParamVehicleMotion").textContent = info.smartStopVehicleMotionConfirmSeconds;
+    if (info.smartStopPostRollSeconds != null) $("pParamPostRoll").textContent = info.smartStopPostRollSeconds;
     applyDefaultSetup(info);
   })
   .catch(() => {
@@ -924,6 +936,7 @@ async function renderFrameMessage(msg, appendEvents) {
       streetPolygon: msg.streetPolygon || [],
       doorPolygon: msg.doorPolygon || [],
       salonSpawnPolygon: msg.salonSpawnPolygon || [],
+      smartStop: msg.smartStop || null,
     };
     elCanvas.width = msg.width;
     elCanvas.height = msg.height;
@@ -953,6 +966,120 @@ function updateFrameStats(msg) {
   $("insideCount").textContent = msg.insideDetections ?? 0;
   $("doorwayCount").textContent = msg.doorwayDetections ?? 0;
   $("outsideCount").textContent = msg.outsideDetections ?? 0;
+  updateSmartStopMetrics(msg.smartStop);
+}
+
+function updateSmartStopMetrics(metrics) {
+  const m = metrics || {
+    enabled: false,
+    phase: "DISABLED",
+    doorState: "UNKNOWN",
+    doorConfidence: 0,
+    calibrationProgress: 0,
+    doorReferenceDifference: 0,
+    doorMotionScore: 0,
+    passengerActivity: false,
+    passengerActivitySeen: false,
+    secondsSincePassengerActivity: 0,
+    sceneMotionScore: 0,
+    vehicleMoving: false,
+    vehicleMovingSeconds: 0,
+    closedStableSeconds: 0,
+    postRollRemainingSeconds: 0,
+  };
+  const stateLabel = {
+    CALIBRATING: "КАЛИБРОВКА",
+    OPEN: "ОТКРЫТА",
+    CLOSED: "ЗАКРЫТА",
+    UNKNOWN: "НЕИЗВЕСТНО",
+  }[m.doorState] || m.doorState || "НЕИЗВЕСТНО";
+  const phaseLabel = {
+    DISABLED: "ВЫКЛЮЧЕНО",
+    CALIBRATING: "КАЛИБРОВКА",
+    MONITORING: "НАБЛЮДЕНИЕ",
+    CLOSING: "ПРОВЕРКА",
+    POST_ROLL: "ПОСТЗАПИСЬ",
+    FINISHED: "ЗАВЕРШЕНО",
+  }[m.phase] || m.phase || "—";
+
+  const stateEl = $("doorVisualState");
+  stateEl.textContent = stateLabel;
+  stateEl.className = `door-state ${(m.doorState || "UNKNOWN").toLowerCase()}`;
+  $("smartStopPhase").textContent = phaseLabel;
+  $("doorConfidence").textContent = `${Math.round((m.doorConfidence || 0) * 100)}%`;
+  $("doorCalibration").textContent = `${Math.round((m.calibrationProgress || 0) * 100)}%`;
+  $("doorDifference").textContent = metricNumber(m.doorReferenceDifference);
+  $("doorMotion").textContent = metricNumber(m.doorMotionScore);
+  $("doorClosedStable").textContent = `${metricSeconds(m.closedStableSeconds)} с`;
+  setBooleanMetric("passengerActivity", !!m.passengerActivity, "да", "нет", true);
+  $("passengerIdle").textContent = m.passengerActivitySeen
+    ? `${metricSeconds(m.secondsSincePassengerActivity)} с`
+    : "не наблюдалась";
+  $("sceneMotion").textContent = metricNumber(m.sceneMotionScore);
+  setBooleanMetric(
+    "vehicleMoving",
+    !!m.vehicleMoving,
+    `да · ${metricSeconds(m.vehicleMovingSeconds)} с`,
+    `нет · ${metricSeconds(m.vehicleMovingSeconds)} с`,
+    false,
+  );
+
+  const bar = $("doorConfidenceBar");
+  bar.style.width = `${Math.round((m.doorConfidence || 0) * 100)}%`;
+  bar.style.background = m.doorState === "OPEN"
+    ? "#75e3ae"
+    : (m.doorState === "CLOSED" ? "#ff8b8b" : "#f6c85f");
+  $("smartStopHint").textContent = smartStopHint(m);
+}
+
+function metricNumber(value) {
+  return Number.isFinite(value) ? value.toFixed(3) : "0.000";
+}
+
+function metricSeconds(value) {
+  return Number.isFinite(value) ? value.toFixed(1) : "0.0";
+}
+
+function setBooleanMetric(id, active, yesText, noText, dangerWhenActive) {
+  const el = $(id);
+  el.textContent = active ? yesText : noText;
+  el.className = active ? (dangerWhenActive ? "alert" : "yes") : "";
+}
+
+function smartStopHint(m) {
+  if (!m.enabled) return "Умное завершение отключено для этой сессии.";
+  if (m.phase === "FINISHED") return `Анализ завершен: ${finishReasonLabel(m.finishReason)}.`;
+  if (m.phase === "POST_ROLL") {
+    return `${finishReasonLabel(m.finishReason)}. Контрольная постзапись: ${metricSeconds(m.postRollRemainingSeconds)} с.`;
+  }
+  if (m.phase === "CALIBRATING" && !m.passengerActivitySeen) {
+    return "Ожидаем пассажирскую активность: без нее эталон открытой двери не фиксируется.";
+  }
+  if (m.phase === "CALIBRATING") {
+    return `Собираем чистые кадры открытой двери: ${Math.round((m.calibrationProgress || 0) * 100)}%.`;
+  }
+  if (m.passengerActivity) {
+    return "Пассажир находится в дверной зоне — состояние двери считается неизвестным.";
+  }
+  if (m.doorState === "CLOSED") {
+    return `Закрытие подтверждается ${metricSeconds(m.closedStableSeconds)} с; до решения также проверяется отсутствие пассажиров.`;
+  }
+  if (m.vehicleMoving) {
+    return "Обнаружено устойчивое движение фона; резервное завершение сработает только после периода без пассажиров.";
+  }
+  return "Система наблюдает дверь, пассажирские треки и движение фона.";
+}
+
+function finishReasonLabel(reason) {
+  const labels = {
+    DOOR_CLOSED: "дверь закрыта и пассажиров в проеме нет",
+    INACTIVITY_AND_MOVEMENT: "пассажирской активности нет, автобус движется",
+    MAX_DURATION: "достигнут максимальный лимит анализа",
+    END_OF_FILE: "достигнут конец видеофайла",
+    USER_STOP: "анализ остановлен пользователем",
+    ANALYSIS_ERROR: "ошибка анализа",
+  };
+  return labels[reason] || reason || "условие завершения подтверждено";
 }
 
 function redrawMonitor() {
@@ -960,7 +1087,32 @@ function redrawMonitor() {
   ctx.clearRect(0, 0, elCanvas.width, elCanvas.height);
   ctx.drawImage(currentFrame.image, 0, 0, currentFrame.width, currentFrame.height);
   drawMonitorZones(currentFrame);
+  drawSmartStopOverlay(currentFrame.smartStop);
   drawBoxes(currentFrame.detections);
+}
+
+function drawSmartStopOverlay(metrics) {
+  if (!metrics?.enabled) return;
+  const label = {
+    CALIBRATING: "ДВЕРЬ: КАЛИБРОВКА",
+    OPEN: `ДВЕРЬ: ОТКРЫТА ${Math.round((metrics.doorConfidence || 0) * 100)}%`,
+    CLOSED: `ДВЕРЬ: ЗАКРЫТА ${Math.round((metrics.doorConfidence || 0) * 100)}%`,
+    UNKNOWN: "ДВЕРЬ: НЕИЗВЕСТНО",
+  }[metrics.doorState] || "ДВЕРЬ: НЕИЗВЕСТНО";
+  const color = metrics.doorState === "OPEN"
+    ? "#75e3ae"
+    : (metrics.doorState === "CLOSED" ? "#ff8b8b" : "#f6c85f");
+  ctx.save();
+  ctx.font = "800 15px system-ui,sans-serif";
+  const width = ctx.measureText(label).width + 22;
+  ctx.fillStyle = "rgba(10,12,16,.82)";
+  ctx.fillRect(12, 12, width, 32);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(12, 12, width, 32);
+  ctx.fillStyle = color;
+  ctx.fillText(label, 23, 34);
+  ctx.restore();
 }
 
 function drawMonitorZones(frame) {
@@ -1044,7 +1196,7 @@ function evtLabel(direction) {
 
 function onFinished(msg) {
   setStatus(msg.status === "FINISHED" ? "готово" : msg.status.toLowerCase(), msg.status === "FINISHED" ? "" : "error");
-  processedFrames = msg.framesProcessed || processedFrames;
+  processedFrames = Math.max(processedFrames, msg.framesProcessed || 0);
   followLive = false;
   syncFollowLiveButton();
   updateTimelineUi();
@@ -1057,7 +1209,8 @@ function onFinished(msg) {
   const exited = msg.totalExited ?? msg.totalAlightings ?? 0;
   elFinalText.innerHTML = msg.status === "FAILED"
     ? `<b>Ошибка:</b> ${msg.errorMessage || "неизвестная"}`
-    : `Кадров: <b>${msg.framesProcessed}</b>, время: <b>${sec} с</b>, вышло: <b>${exited}</b>, в салоне: <b>${msg.finalOnboard}</b>`;
+    : `Кадров: <b>${msg.framesProcessed}</b>, время: <b>${sec} с</b>, вышло: <b>${exited}</b>, в салоне: <b>${msg.finalOnboard}</b><br>Завершение: <b>${finishReasonLabel(msg.finishReason)}</b>`;
+  if (msg.smartStop) updateSmartStopMetrics(msg.smartStop);
   currentSessionId = null;
   onSelChange();
   $("btnStop").style.display = "none";
@@ -1071,6 +1224,7 @@ function resetMonitor() {
   followLive = true;
   displayToken = 0;
   processedFrames = 0;
+  sourceFramesPerSecond = 25;
   currentFrame = null;
   syncFollowLiveButton();
   elTimeline.value = "0";
@@ -1096,6 +1250,7 @@ function resetMonitor() {
     "outsideCount",
   ].forEach((id) => { $(id).textContent = "0"; });
   $("statFps").textContent = "-";
+  updateSmartStopMetrics(null);
   $("emptyState").classList.remove("hidden");
 }
 

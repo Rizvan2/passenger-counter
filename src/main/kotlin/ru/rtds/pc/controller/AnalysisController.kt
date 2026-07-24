@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*
 import ru.rtds.pc.dto.SessionStatusResponse
 import ru.rtds.pc.dto.StartSessionRequest
 import ru.rtds.pc.dto.StartSessionResponse
+import ru.rtds.pc.config.SmartStopProperties
 import ru.rtds.pc.ftp.config.FtpProperties
 import ru.rtds.pc.service.AnalysisService
 import ru.rtds.pc.service.CountingZones
@@ -21,6 +22,7 @@ class AnalysisController(
     private val analysisService: AnalysisService,
     private val reidService: ReidService,
     private val ftpProperties: FtpProperties,
+    private val smartStopProperties: SmartStopProperties,
     @Value("\${pc.process-every-n-frames}") private val processEveryNFrames: Int,
     @Value("\${pc.count-anchor-y-ratio:0.5}") private val countAnchorYRatio: Float,
     @Value("\${pc.count-min-anchor-movement-px:40}") private val minAnchorMovement: Float,
@@ -74,6 +76,7 @@ class AnalysisController(
             insideOnPositiveSide = insidePositive,
             autoInitialOnboard = req.autoInitialOnboard,
             initialOnboard = req.initialOnboard,
+            smartStopEnabled = req.smartStopEnabled,
         )
         analysisService.startAsync(s)
         return ResponseEntity.ok(
@@ -97,6 +100,8 @@ class AnalysisController(
                 totalAlightings = s.totalAlightings.get(),
                 currentOnboard = s.currentOnboard,
                 errorMessage = s.errorMessage,
+                finishReason = s.finishReason,
+                smartStop = s.smartStopSnapshot,
             )
         )
     }
@@ -123,6 +128,11 @@ class AnalysisController(
             "countAnchorYRatio" to countAnchorYRatio,
             "minAnchorMovement" to minAnchorMovement,
             "confidenceThreshold" to confidenceThreshold,
+            "smartStopEnabled" to smartStopProperties.enabled,
+            "smartStopDoorCloseConfirmSeconds" to smartStopProperties.doorCloseConfirmSeconds,
+            "smartStopInactivitySeconds" to smartStopProperties.inactivitySeconds,
+            "smartStopVehicleMotionConfirmSeconds" to smartStopProperties.vehicleMotionConfirmSeconds,
+            "smartStopPostRollSeconds" to smartStopProperties.postRollSeconds,
             "defaultLineAx" to ftpProperties.analysis.resolvedLineAx(),
             "defaultLineAy" to ftpProperties.analysis.resolvedLineAy(),
             "defaultLineBx" to ftpProperties.analysis.resolvedLineBx(),

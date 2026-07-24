@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>Passenger Counter</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="/style.css?v=20260629-1">
+  <link rel="stylesheet" href="/style.css?v=20260724-1">
   <style>
     .tabs {
       display: flex;
@@ -442,6 +442,13 @@
           <span>Пассажиров в начале</span>
           <input id="initialOnboard" type="number" class="num-in" value="0" min="0">
         </label>
+        <label class="field">
+          <span>Умное завершение</span>
+          <div class="chk-row">
+            <input id="smartStopEnabled" type="checkbox" checked>
+            <span class="chk-label">Завершать после подтвержденного закрытия двери</span>
+          </div>
+        </label>
       </div>
       <details class="adv">
         <summary>Параметры анализа (из application.yml)</summary>
@@ -450,6 +457,10 @@
           <div class="yml-row"><span>count-anchor-y-ratio</span><b id="pParamAnchor">-</b></div>
           <div class="yml-row"><span>count-min-anchor-movement-px</span><b id="pParamMovement">-</b></div>
           <div class="yml-row"><span>confidence-threshold</span><b id="pParamConf">-</b></div>
+          <div class="yml-row"><span>door-close-confirm-seconds</span><b id="pParamDoorClose">-</b></div>
+          <div class="yml-row"><span>inactivity-seconds</span><b id="pParamInactivity">-</b></div>
+          <div class="yml-row"><span>vehicle-motion-confirm-seconds</span><b id="pParamVehicleMotion">-</b></div>
+          <div class="yml-row"><span>post-roll-seconds</span><b id="pParamPostRoll">-</b></div>
         </div>
         <p class="yml-hint">Меняются в application.yml и требуют перезапуска.</p>
       </details>
@@ -488,6 +499,37 @@
         <div class="stat"><span>Кадр</span><strong id="statFrames">0</strong></div>
       </div>
 
+      <div class="sensor-card">
+        <div class="panel-title sensor-title">
+          <span>Визуальное завершение</span>
+          <span id="smartStopPhase" class="sensor-phase">КАЛИБРОВКА</span>
+        </div>
+        <div class="door-state-row">
+          <div>
+            <span class="sensor-caption">Состояние двери</span>
+            <strong id="doorVisualState" class="door-state unknown">КАЛИБРОВКА</strong>
+          </div>
+          <div class="confidence-ring">
+            <strong id="doorConfidence">0%</strong>
+            <span>уверенность</span>
+          </div>
+        </div>
+        <div class="metric-progress">
+          <div id="doorConfidenceBar" class="metric-progress-value"></div>
+        </div>
+        <div class="sensor-grid">
+          <div><span>Калибровка</span><b id="doorCalibration">0%</b></div>
+          <div><span>Отличие от открытой</span><b id="doorDifference">0.000</b></div>
+          <div><span>Движение двери</span><b id="doorMotion">0.000</b></div>
+          <div><span>Закрыта стабильно</span><b id="doorClosedStable">0.0 с</b></div>
+          <div><span>Пассажир в двери</span><b id="passengerActivity">нет</b></div>
+          <div><span>Без активности</span><b id="passengerIdle">—</b></div>
+          <div><span>Движение улицы</span><b id="sceneMotion">0.000</b></div>
+          <div><span>Автобус движется</span><b id="vehicleMoving">нет</b></div>
+        </div>
+        <div id="smartStopHint" class="sensor-hint">Ожидаем пассажирскую активность для калибровки открытой двери.</div>
+      </div>
+
       <div class="zone-card">
         <div class="panel-title">Зоны</div>
         <div class="zone-row"><span class="dot inside"></span><span>SALON</span><b id="insideSideLabel">polygon</b></div>
@@ -515,6 +557,6 @@
   </section>
 </div>
 
-<script src="/app.js?v=20260722-1"></script>
+<script src="/app.js?v=20260724-1"></script>
 </body>
 </html>

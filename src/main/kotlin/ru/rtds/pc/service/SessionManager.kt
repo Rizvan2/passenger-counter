@@ -2,6 +2,7 @@ package ru.rtds.pc.service
 
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import ru.rtds.pc.config.SmartStopProperties
 import ru.rtds.pc.model.AnalysisSession
 import ru.rtds.pc.model.NormalizedPoint
 import ru.rtds.pc.model.VideoSource
@@ -10,7 +11,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 @Service
-class SessionManager {
+class SessionManager(
+    private val smartStopProperties: SmartStopProperties,
+) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val sessions = ConcurrentHashMap<String, AnalysisSession>()
 
@@ -32,6 +35,7 @@ class SessionManager {
         zoneProfileId: String? = null,
         zoneProfileName: String? = null,
         logicalDoor: String? = null,
+        smartStopEnabled: Boolean? = null,
     ): AnalysisSession {
         val id = UUID.randomUUID().toString()
         val videoMetadata = VideoMetadata.fromPath(videoPath)
@@ -55,6 +59,7 @@ class SessionManager {
             zoneProfileId      = zoneProfileId,
             zoneProfileName    = zoneProfileName,
             logicalDoor        = logicalDoor,
+            smartStopEnabled   = smartStopEnabled ?: smartStopProperties.enabled,
         )
         sessions[id] = s
         log.info("Created session {} for {} (source={})", id, videoPath, source)
